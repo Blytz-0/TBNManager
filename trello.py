@@ -85,19 +85,41 @@ def search_for_card(in_game_id: str) -> Optional[dict]:
 
 
 
-def update_card_description(card_id: str, new_description: str) -> bool:
-    url = f"https://api.trello.com/1/cards/{card_id}"
+def update_card_description(card_id: str, added_description: str) -> bool:
+    url_get = f"https://api.trello.com/1/cards/{card_id}"
     
-    data = {
+    # Fetch the current description first
+    get_data = {
+        'key': TRELLO_API_KEY,
+        'token': TRELLO_TOKEN,
+        'fields': 'desc'  # We only want the description
+    }
+    response_get = requests.get(url_get, params=get_data)
+    
+    # Check if request was successful
+    if response_get.status_code != 200:
+        print(f"Failed to get current description for card {card_id}. HTTP Error: {response_get.text}")
+        return False
+
+    # Append the new data to the existing description
+    current_description = response_get.json().get('desc', '')
+    new_description = current_description + "\n" + added_description
+    
+    # Now, update the card with the new description
+    url_update = f"https://api.trello.com/1/cards/{card_id}"
+    update_data = {
         'key': TRELLO_API_KEY,
         'token': TRELLO_TOKEN,
         'desc': new_description
     }
-
-    response = requests.put(url, json=data)
-    response.raise_for_status()
+    response_update = requests.put(url_update, json=update_data)
+    
+    if response_update.status_code != 200:
+        print(f"Failed to update card {card_id}. HTTP Error: {response_update.text}")
+        return False
 
     return True
+
 
 def move_card_to_list(card_id: str, new_list_id: str) -> bool:
     url = f"https://api.trello.com/1/cards/{card_id}"
