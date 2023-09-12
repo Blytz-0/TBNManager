@@ -227,10 +227,10 @@ async def on_disconnect():
 
 
 
-# Define the add_strike function
+# Defined add_strike function
 async def add_strike(interaction: discord.Interaction, player_name: str, in_game_id: str, *, reason: str):
     try:
-        # Placeholder logic, replace with your own
+        # Placeholder logic
         # with your_database_connection as conn:
         #     cursor = conn.cursor()
         #     cursor.execute("UPDATE players SET strikes = strikes + 1 WHERE name = ? AND id = ?", (player_name, in_game_id))
@@ -243,7 +243,6 @@ async def add_strike(interaction: discord.Interaction, player_name: str, in_game
 
 async def prompt_for_ban_confirmation(interaction, player_name, in_game_id):
     # This method sends a message and waits for a 'Yes' or 'No' reply.
-    # This is just a placeholder, you'll need to implement the real method!
     return True  # or False, depending on the response
 
 
@@ -320,9 +319,9 @@ async def addstrike_cmd(interaction: discord.Interaction, player_name: str, in_g
         if not success:
             messages_to_send.append("Failed to add strike to Trello.")
 
-    # Now, send the remaining messages:
+    # Now, sends the remaining messages:
     for msg in messages_to_send:
-        # Send the subsequent messages as follow-ups
+        # Sends the subsequent messages as follow-ups
         await interaction.followup.send(msg)
 
 
