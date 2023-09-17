@@ -158,10 +158,3 @@ def move_card_to_list(card_id: str, new_list_id: str) -> bool:
     except requests.exceptions.RequestException as e:
         logging.error(f"Failed to move card {card_id} to list {new_list_id}. Error: {str(e)}")
         return False
-
-
-
-print(f"Trello API Key: {TRELLO_API_KEY}")
-print(f"Trello Token: {TRELLO_TOKEN}")
-print(f"Trello List ID: {TRELLO_LIST_ID}")
-print(f"Trello Board ID: {TRELLO_BOARD_ID}")
