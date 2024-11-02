@@ -43,3 +43,5 @@ GENERAL_COMMANDS = [
         "/alderonid: Link your Discord Account to your AlderonID ",
         "/clear: Clear a specified number of messages from a channel"
     ]
+
+DATABASE_PATH = 'players.db'
