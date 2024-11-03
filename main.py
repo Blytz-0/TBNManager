@@ -49,57 +49,6 @@ intents.messages = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 
-import os
-import re
-import json
-import discord
-import sqlite3
-import asyncio
-from decouple import config
-from discord.ext import commands
-from discord import app_commands
-from dotenv import load_dotenv
-from trello import add_strike_to_trello, move_card_to_list, update_card_description, search_for_card, TRELLO_LIST_ID
-from constants import REQUIRED_ROLES, CHANNELS, GENDER_ROLE_EMOJIS, PLATFORM_ROLE_EMOJIS, SERVER_ROLE_EMOJIS, GENERAL_COMMANDS, DATABASE_PATH
-
-# import sqlite3 and established a connection conn
-
-conn = sqlite3.connect(DATABASE_PATH)
-c = conn.cursor()
-
-# Update the table creation to include the new field 'playername'
-c.execute('''
-    CREATE TABLE IF NOT EXISTS players (
-        username TEXT PRIMARY KEY,
-        playerid TEXT,
-        playername TEXT
-    )
-''')
-conn.commit()
-conn.close()
-
-
-
-
-load_dotenv()
-
-PREFIX = '/'
-
-TOKEN = os.getenv('TOKEN')
-BANNED_LIST_ID = os.getenv('BANNED_LIST_ID')
-THIRD_STRIKE_LIST_ID = os.getenv('THIRD_STRIKE_LIST_ID')
-STRIKE_LIST_MAPPING_STR = os.getenv('STRIKE_LIST_MAPPING')
-STRIKE_LIST_MAPPING = json.loads(STRIKE_LIST_MAPPING_STR)
-STRIKE_STAGE_STR = config('STRIKE_STAGE')
-STRIKE_STAGE = json.loads(STRIKE_STAGE_STR)
-
-
-intents = discord.Intents.default()
-intents.message_content = True
-intents.messages = True
-
-bot = commands.Bot(command_prefix=PREFIX, intents=intents)
-
 
 def has_required_role():
     def predicate(ctx):
