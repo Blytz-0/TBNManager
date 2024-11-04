@@ -8,8 +8,8 @@ from decouple import config
 from discord.ext import commands
 from discord import app_commands
 from dotenv import load_dotenv
-from trello import add_strike_to_trello, move_card_to_list, update_card_description, search_for_card, TRELLO_LIST_ID
-from constants import REQUIRED_ROLES, CHANNELS, GENDER_ROLE_EMOJIS, PLATFORM_ROLE_EMOJIS, SERVER_ROLE_EMOJIS, GENERAL_COMMANDS, DATABASE_PATH
+from integrations.trello import add_strike_to_trello, move_card_to_list, update_card_description, search_for_card, TRELLO_LIST_ID
+from config.constants import REQUIRED_ROLES, CHANNELS, GENDER_ROLE_EMOJIS, PLATFORM_ROLE_EMOJIS, SERVER_ROLE_EMOJIS, GENERAL_COMMANDS, DATABASE_PATH
 
 # import sqlite3 and established a connection conn
 
