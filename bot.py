@@ -1,5 +1,4 @@
 import os
-import json
 import discord
 import sqlite3
 from decouple import config
@@ -9,13 +8,10 @@ from database.mysql import get_db_connection
 from config.constants import DATABASE_PATH, REQUIRED_ROLES
 from config.config import TOKEN
 
-# Import command modules
-from commands import admin_commands, player_commands
-
 # Load environment variables
 load_dotenv()
 
-# Database connection
+# Database connection setup
 conn = sqlite3.connect(DATABASE_PATH)
 c = conn.cursor()
 c.execute('''
@@ -44,11 +40,17 @@ def has_required_role():
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name} - {bot.user.id}")
+    
+    # Load extensions
     try:
-        synced = await bot.tree.sync()
+        await bot.load_extension("commands.admin_commands")
+        await bot.load_extension("commands.player_commands")
+        
+        # Sync commands for a specific guild for faster testing (optional)
+        synced = await bot.tree.sync(guild=discord.Object(id=1144020437211283637))  # Replace YOUR_GUILD_ID with your guild ID
         print(f"Synced {len(synced)} command(s)")
     except Exception as e:
-        print(e)
+        print(f"Error syncing commands or loading extensions: {e}")
 
 @bot.event
 async def on_command_error(ctx, error):
