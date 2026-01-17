@@ -384,6 +384,133 @@ class StrikeCommands(commands.Cog):
                 ephemeral=True
             )
 
+    @app_commands.command(
+        name="unban",
+        description="Unban a player"
+    )
+    @app_commands.describe(
+        in_game_id="The player's Alderon ID (XXX-XXX-XXX)"
+    )
+    async def unban_player(self, interaction: discord.Interaction, in_game_id: str):
+        """Unban a player by their Alderon ID."""
+
+        if not await require_admin(interaction):
+            return
+
+        try:
+            guild_id = interaction.guild_id
+
+            # Check if player is actually banned
+            ban = StrikeQueries.get_ban(guild_id, in_game_id)
+            if not ban:
+                await interaction.response.send_message(
+                    f"No active ban found for player `{in_game_id}`.",
+                    ephemeral=True
+                )
+                return
+
+            player_name = ban['player_name']
+
+            # Unban the player
+            if StrikeQueries.unban(guild_id, in_game_id, interaction.user.id):
+                AuditQueries.log(
+                    guild_id=guild_id,
+                    action_type=AuditQueries.ACTION_UNBAN,
+                    performed_by_id=interaction.user.id,
+                    performed_by_name=str(interaction.user),
+                    target_user_id=ban.get('user_id'),
+                    target_player_name=player_name,
+                    details={'in_game_id': in_game_id}
+                )
+
+                embed = discord.Embed(
+                    title="Player Unbanned",
+                    color=discord.Color.green()
+                )
+                embed.add_field(name="Player", value=player_name, inline=True)
+                embed.add_field(name="Alderon ID", value=f"`{in_game_id}`", inline=True)
+                embed.add_field(name="Unbanned By", value=interaction.user.mention, inline=True)
+                embed.set_footer(text="Remember to unban them in-game if applicable!")
+
+                await interaction.response.send_message(embed=embed)
+            else:
+                await interaction.response.send_message(
+                    "Failed to unban player. Please try again.",
+                    ephemeral=True
+                )
+
+        except Exception as e:
+            logger.error(f"Error in /unban: {e}", exc_info=True)
+            await interaction.response.send_message(
+                "An error occurred while unbanning the player.",
+                ephemeral=True
+            )
+
+    @app_commands.command(
+        name="bans",
+        description="View all banned players in this server"
+    )
+    @app_commands.describe(
+        show_unbanned="Also show players who were unbanned"
+    )
+    async def list_bans(self, interaction: discord.Interaction, show_unbanned: bool = False):
+        """List all banned players."""
+
+        if not await require_admin(interaction):
+            return
+
+        try:
+            guild_id = interaction.guild_id
+            GuildQueries.get_or_create(guild_id, interaction.guild.name)
+
+            bans = StrikeQueries.get_all_bans(guild_id, include_unbanned=show_unbanned)
+
+            if not bans:
+                await interaction.response.send_message(
+                    "No banned players found." if not show_unbanned else "No ban records found.",
+                    ephemeral=True
+                )
+                return
+
+            embed = discord.Embed(
+                title="Banned Players" if not show_unbanned else "Ban History",
+                description=f"{len(bans)} record(s) in {interaction.guild.name}",
+                color=discord.Color.red()
+            )
+
+            for ban in bans[:15]:  # Limit to 15 to avoid embed limits
+                status_parts = []
+                if ban['banned_in_game']:
+                    status_parts.append("In-game: Yes")
+                else:
+                    status_parts.append("In-game: Pending")
+
+                if ban['unbanned_at']:
+                    status_parts.append(f"Unbanned: {ban['unbanned_at'].strftime('%Y-%m-%d')}")
+                    icon = "✅"
+                else:
+                    icon = "🚫"
+
+                embed.add_field(
+                    name=f"{icon} {ban['player_name']}",
+                    value=f"ID: `{ban['in_game_id']}`\n"
+                          f"Reason: {ban['reason'][:40]}...\n"
+                          f"Banned: {ban['banned_at'].strftime('%Y-%m-%d')} | {' | '.join(status_parts)}",
+                    inline=False
+                )
+
+            if len(bans) > 15:
+                embed.set_footer(text=f"Showing 15 of {len(bans)} bans")
+
+            await interaction.response.send_message(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in /bans: {e}", exc_info=True)
+            await interaction.response.send_message(
+                "An error occurred while retrieving bans.",
+                ephemeral=True
+            )
+
 
 class BanConfirmationView(discord.ui.View):
     """View for confirming in-game ban after 3rd strike."""

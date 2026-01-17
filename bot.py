@@ -38,9 +38,12 @@ bot = commands.Bot(
 COGS = [
     # Player commands
     'cogs.player.linking',
+    'cogs.player.roles',
 
     # Admin commands
     'cogs.admin.strikes',
+    'cogs.admin.moderation',
+    'cogs.admin.config',
 ]
 
 
