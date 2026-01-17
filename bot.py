@@ -1,71 +1,179 @@
-import os
+# bot.py
+"""
+TBNManager Discord Bot - Entry Point
+
+A modular Discord bot for server administration and moderation.
+Supports multi-guild deployment with per-server configuration.
+"""
+
 import discord
-import sqlite3
-from decouple import config
 from discord.ext import commands
-from dotenv import load_dotenv
-from database.mysql import get_db_connection
-from config.constants import DATABASE_PATH, REQUIRED_ROLES
-from config.config import TOKEN
+from config.settings import TOKEN, LOG_LEVEL
+from database.connection import test_connection, close_pool
+from database.queries import GuildQueries
+import logging
+import asyncio
 
-# Load environment variables
-load_dotenv()
-
-# Database connection setup
-conn = sqlite3.connect(DATABASE_PATH)
-c = conn.cursor()
-c.execute('''
-    CREATE TABLE IF NOT EXISTS players (
-        username TEXT PRIMARY KEY,
-        playerid TEXT,
-        playername TEXT
-    )
-''')
-conn.commit()
-conn.close()
+# Configure logging
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 # Bot configuration
-PREFIX = '/'
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix=PREFIX, intents=intents)
+intents.members = True  # Required for member lookup
+intents.guilds = True   # Required for guild events
 
-# Role checker
-def has_required_role():
-    def predicate(ctx):
-        return any(role.name in REQUIRED_ROLES for role in ctx.author.roles)
-    return commands.check(predicate)
+bot = commands.Bot(
+    command_prefix='/',
+    intents=intents,
+    description="TBNManager - Server Administration Bot"
+)
 
-# Events
+# List of cogs to load
+COGS = [
+    # Player commands
+    'cogs.player.linking',
+
+    # Admin commands
+    'cogs.admin.strikes',
+]
+
+
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user.name} - {bot.user.id}")
-    
-    # Load extensions
+    """Called when bot is ready and connected."""
+    logger.info(f"Logged in as {bot.user.name} (ID: {bot.user.id})")
+    logger.info(f"Connected to {len(bot.guilds)} guild(s)")
+
+    # Test database connection
+    if test_connection():
+        logger.info("Database connection successful")
+    else:
+        logger.error("Database connection FAILED - some features may not work")
+
+    # Load cogs
+    for cog in COGS:
+        try:
+            await bot.load_extension(cog)
+            logger.info(f"Loaded cog: {cog}")
+        except Exception as e:
+            logger.error(f"Failed to load cog {cog}: {e}")
+
+    # Sync commands globally (for production)
+    # For faster testing, you can sync to a specific guild
     try:
-        await bot.load_extension("commands.admin_commands")
-        await bot.load_extension("commands.player_commands")
-        
-        # Sync commands for a specific guild for faster testing (optional)
-        synced = await bot.tree.sync(guild=discord.Object(id=1144020437211283637))  # Replace YOUR_GUILD_ID with your guild ID
-        print(f"Synced {len(synced)} command(s)")
+        # Global sync (takes up to an hour to propagate)
+        synced = await bot.tree.sync()
+        logger.info(f"Synced {len(synced)} global command(s)")
+
+        # Optional: Sync to specific guild for instant updates during development
+        # Uncomment and replace with your test guild ID:
+        # test_guild = discord.Object(id=YOUR_GUILD_ID)
+        # await bot.tree.sync(guild=test_guild)
+        # logger.info("Synced commands to test guild")
+
     except Exception as e:
-        print(f"Error syncing commands or loading extensions: {e}")
+        logger.error(f"Failed to sync commands: {e}")
+
+    # Set bot status
+    await bot.change_presence(
+        activity=discord.Activity(
+            type=discord.ActivityType.watching,
+            name=f"{len(bot.guilds)} servers"
+        )
+    )
+
+
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    """Called when bot joins a new guild."""
+    logger.info(f"Joined new guild: {guild.name} (ID: {guild.id})")
+
+    # Register guild in database
+    try:
+        GuildQueries.get_or_create(guild.id, guild.name)
+        logger.info(f"Registered guild {guild.name} in database")
+    except Exception as e:
+        logger.error(f"Failed to register guild {guild.name}: {e}")
+
+    # Update presence
+    await bot.change_presence(
+        activity=discord.Activity(
+            type=discord.ActivityType.watching,
+            name=f"{len(bot.guilds)} servers"
+        )
+    )
+
+
+@bot.event
+async def on_guild_remove(guild: discord.Guild):
+    """Called when bot is removed from a guild."""
+    logger.info(f"Left guild: {guild.name} (ID: {guild.id})")
+
+    # Note: We don't delete guild data immediately in case they re-add the bot
+    # Data cleanup can be done via a scheduled task for guilds inactive for X days
+
+    # Update presence
+    await bot.change_presence(
+        activity=discord.Activity(
+            type=discord.ActivityType.watching,
+            name=f"{len(bot.guilds)} servers"
+        )
+    )
+
 
 @bot.event
 async def on_command_error(ctx, error):
-    print(f"Error: {error}")
-    if isinstance(error, commands.MissingAnyRole):
-        await ctx.send("You do not have access to this command!")
+    """Global error handler for command errors."""
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("You don't have permission to use this command.", ephemeral=True)
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"Missing required argument: {error.param.name}", ephemeral=True)
+    elif isinstance(error, commands.CommandNotFound):
+        pass  # Ignore unknown commands
+    else:
+        logger.error(f"Command error: {error}", exc_info=True)
 
-@bot.event
-async def on_error(event, *args, **kwargs):
-    import traceback
-    traceback.print_exc()
 
-@bot.event
-async def on_disconnect():
-    conn.close()
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error):
+    """Global error handler for app (slash) command errors."""
+    logger.error(f"App command error in {interaction.command}: {error}", exc_info=True)
 
-# Run the bot
-bot.run(TOKEN)
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(
+                "An error occurred while processing your command.",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                "An error occurred while processing your command.",
+                ephemeral=True
+            )
+    except Exception:
+        pass  # Couldn't send error message
+
+
+async def main():
+    """Main entry point."""
+    logger.info("Starting TBNManager bot...")
+
+    try:
+        async with bot:
+            await bot.start(TOKEN)
+    except KeyboardInterrupt:
+        logger.info("Shutdown requested...")
+    finally:
+        # Cleanup
+        close_pool()
+        logger.info("Bot shutdown complete")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
