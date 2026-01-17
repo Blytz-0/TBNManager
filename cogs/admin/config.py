@@ -352,8 +352,9 @@ class ConfigCommands(commands.Cog):
         # Strike commands
         strike_cmds = [
             "`/addstrike` - Add a strike to a player",
-            "`/strikes` - View a player's strikes",
-            "`/removestrike` - Remove a specific strike",
+            "`/strikes` - View active strikes (last 3)",
+            "`/strikehistory` - View full strike history",
+            "`/removestrike` - Remove a strike",
             "`/clearstrikes` - Clear all strikes for a player",
             "`/recentstrikes` - View recent strikes",
             "`/unban` - Unban a player",

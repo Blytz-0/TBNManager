@@ -3,9 +3,13 @@
 
 from database.connection import get_cursor
 from typing import Optional
+from datetime import datetime, timedelta
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Strike expiry duration in days
+STRIKE_EXPIRY_DAYS = 30
 
 
 class StrikeQueries:
@@ -52,7 +56,10 @@ class StrikeQueries:
 
     @staticmethod
     def get_strike_count(guild_id: int, in_game_id: str) -> int:
-        """Get the number of active strikes for a player."""
+        """Get the number of active (non-expired) strikes for a player."""
+        # First, expire any old strikes
+        StrikeQueries.expire_old_strikes(guild_id, in_game_id)
+
         with get_cursor() as cursor:
             cursor.execute(
                 """SELECT COUNT(*) as count FROM strikes
@@ -61,6 +68,86 @@ class StrikeQueries:
             )
             result = cursor.fetchone()
             return result['count'] if result else 0
+
+    @staticmethod
+    def expire_old_strikes(guild_id: int, in_game_id: str) -> int:
+        """
+        Expire strikes older than 30 days (one at a time, oldest first).
+        Each strike adds 30 days to the expiry window.
+        Returns number of strikes expired.
+        """
+        with get_cursor() as cursor:
+            # Get all active strikes ordered by date (oldest first)
+            cursor.execute(
+                """SELECT id, created_at, strike_number FROM strikes
+                   WHERE guild_id = %s AND in_game_id = %s AND is_active = TRUE
+                   ORDER BY created_at ASC""",
+                (guild_id, in_game_id)
+            )
+            active_strikes = cursor.fetchall()
+
+            if not active_strikes:
+                return 0
+
+            expired_count = 0
+            now = datetime.now()
+
+            # Check each strike starting from the oldest
+            # Each strike should expire 30 days after the previous one would
+            for i, strike in enumerate(active_strikes):
+                # Calculate expiry: first strike expires 30 days after creation
+                # Each subsequent strike adds another 30 days
+                expiry_date = strike['created_at'] + timedelta(days=STRIKE_EXPIRY_DAYS * (i + 1))
+
+                if now >= expiry_date:
+                    # Expire this strike
+                    cursor.execute(
+                        """UPDATE strikes SET is_active = FALSE,
+                           expired_at = %s, expiry_reason = 'auto_expired'
+                           WHERE id = %s""",
+                        (now, strike['id'])
+                    )
+                    expired_count += 1
+                    logger.info(f"Auto-expired strike #{strike['strike_number']} for {in_game_id} in guild {guild_id}")
+                else:
+                    # Since strikes are ordered, if this one hasn't expired, later ones won't either
+                    break
+
+            return expired_count
+
+    @staticmethod
+    def get_strike_expiry_info(guild_id: int, in_game_id: str) -> list:
+        """
+        Get expiry information for active strikes.
+        Returns list of dicts with strike info and days_until_expiry.
+        """
+        # First expire any old strikes
+        StrikeQueries.expire_old_strikes(guild_id, in_game_id)
+
+        with get_cursor() as cursor:
+            cursor.execute(
+                """SELECT id, strike_number, created_at FROM strikes
+                   WHERE guild_id = %s AND in_game_id = %s AND is_active = TRUE
+                   ORDER BY created_at ASC""",
+                (guild_id, in_game_id)
+            )
+            active_strikes = cursor.fetchall()
+
+            now = datetime.now()
+            result = []
+
+            for i, strike in enumerate(active_strikes):
+                expiry_date = strike['created_at'] + timedelta(days=STRIKE_EXPIRY_DAYS * (i + 1))
+                days_until = (expiry_date - now).days
+                result.append({
+                    'id': strike['id'],
+                    'strike_number': strike['strike_number'],
+                    'created_at': strike['created_at'],
+                    'expiry_date': expiry_date,
+                    'days_until_expiry': max(0, days_until)
+                })
+
+            return result
 
     @staticmethod
     def get_player_strikes(guild_id: int, in_game_id: str) -> list:

@@ -104,6 +104,10 @@ class StrikeCommands(commands.Cog):
                 color = discord.Color.red()
                 title = f"Strike #{strike_number} Issued"
 
+            # Get admin's top role for display
+            admin_role = interaction.user.top_role
+            admin_display = admin_role.name if admin_role.name != "@everyone" else "Member"
+
             embed = discord.Embed(
                 title=title,
                 color=color
@@ -112,8 +116,8 @@ class StrikeCommands(commands.Cog):
             embed.add_field(name="Alderon ID", value=f"`{in_game_id}`", inline=True)
             embed.add_field(name="Strike #", value=str(strike_number), inline=True)
             embed.add_field(name="Reason", value=reason, inline=False)
-            embed.add_field(name="Issued By", value=interaction.user.mention, inline=True)
-            embed.set_footer(text=f"Strike ID: {strike['id']}")
+            embed.add_field(name="Issued By", value=f"{interaction.user.mention} ({admin_display})", inline=True)
+            embed.set_footer(text="Strikes expire after 30 days each")
 
             await interaction.followup.send(embed=embed)
 
@@ -188,14 +192,14 @@ class StrikeCommands(commands.Cog):
 
     @app_commands.command(
         name="strikes",
-        description="View strikes for a player"
+        description="View active strikes for a player (last 3)"
     )
     @app_commands.guild_only()
     @app_commands.describe(
         in_game_id="The player's Alderon ID (XXX-XXX-XXX)"
     )
     async def view_strikes(self, interaction: discord.Interaction, in_game_id: str):
-        """View all strikes for a player."""
+        """View active strikes for a player (max 3, with expiry info)."""
 
         if not await require_admin(interaction):
             return
@@ -204,9 +208,14 @@ class StrikeCommands(commands.Cog):
             guild_id = interaction.guild_id
             GuildQueries.get_or_create(guild_id, interaction.guild.name)
 
-            strikes = StrikeQueries.get_player_strikes(guild_id, in_game_id)
+            # Get active strikes only (this also auto-expires old ones)
+            active_strikes = StrikeQueries.get_active_strikes(guild_id, in_game_id)
+            expiry_info = StrikeQueries.get_strike_expiry_info(guild_id, in_game_id)
 
-            if not strikes:
+            # Also get all strikes to find player name
+            all_strikes = StrikeQueries.get_player_strikes(guild_id, in_game_id)
+
+            if not all_strikes:
                 await interaction.response.send_message(
                     f"No strikes found for player with ID `{in_game_id}`.",
                     ephemeral=True
@@ -214,25 +223,38 @@ class StrikeCommands(commands.Cog):
                 return
 
             # Get player name from most recent strike
-            player_name = strikes[-1]['player_name']
-            active_count = sum(1 for s in strikes if s['is_active'])
+            player_name = all_strikes[-1]['player_name']
+            active_count = len(active_strikes)
+            total_count = len(all_strikes)
 
             embed = discord.Embed(
-                title=f"Strikes for {player_name}",
+                title=f"Active Strikes for {player_name}",
                 description=f"Alderon ID: `{in_game_id}`\n"
-                           f"Active Strikes: **{active_count}**",
+                           f"Active Strikes: **{active_count}** (Total history: {total_count})",
                 color=discord.Color.orange() if active_count > 0 else discord.Color.green()
             )
 
-            for strike in strikes:
-                status = "🔴 Active" if strike['is_active'] else "⚪ Removed"
+            if active_count == 0:
                 embed.add_field(
-                    name=f"Strike #{strike['strike_number']} - {status}",
-                    value=f"**Reason:** {strike['reason']}\n"
-                          f"**By:** {strike['admin_name']}\n"
-                          f"**Date:** {strike['created_at'].strftime('%Y-%m-%d %H:%M')}",
+                    name="No Active Strikes",
+                    value="This player has no active strikes.\nUse `/strikehistory` to view past strikes.",
                     inline=False
                 )
+            else:
+                # Show only last 3 active strikes with expiry info
+                expiry_map = {e['id']: e for e in expiry_info}
+                for strike in active_strikes[-3:]:  # Last 3 active strikes
+                    expiry = expiry_map.get(strike['id'], {})
+                    days_left = expiry.get('days_until_expiry', '?')
+
+                    embed.add_field(
+                        name=f"Strike #{strike['strike_number']} - 🔴 Active",
+                        value=f"**Reason:** {strike['reason']}\n"
+                              f"**By:** {strike['admin_name']}\n"
+                              f"**Date:** {strike['created_at'].strftime('%Y-%m-%d')}\n"
+                              f"**Expires in:** {days_left} day(s)",
+                        inline=False
+                    )
 
             # Check if banned
             ban = StrikeQueries.get_ban(guild_id, in_game_id)
@@ -243,6 +265,8 @@ class StrikeCommands(commands.Cog):
                           f"In-game: {'Yes' if ban['banned_in_game'] else 'Pending'}",
                     inline=False
                 )
+
+            embed.set_footer(text="Use /strikehistory for full strike log")
 
             await interaction.response.send_message(embed=embed)
 
@@ -255,14 +279,17 @@ class StrikeCommands(commands.Cog):
 
     @app_commands.command(
         name="removestrike",
-        description="Remove a specific strike from a player"
+        description="Remove a strike from a player"
     )
     @app_commands.guild_only()
     @app_commands.describe(
-        strike_id="The strike ID to remove (shown in /strikes)"
+        in_game_id="The player's Alderon ID (XXX-XXX-XXX)",
+        strike_number="Which strike to remove (1, 2, or 3). Removes most recent if not specified."
     )
-    async def remove_strike(self, interaction: discord.Interaction, strike_id: int):
-        """Remove a strike by ID."""
+    async def remove_strike(self, interaction: discord.Interaction,
+                            in_game_id: str,
+                            strike_number: int = None):
+        """Remove a strike from a player by Alderon ID."""
 
         if not await require_admin(interaction):
             return
@@ -270,23 +297,57 @@ class StrikeCommands(commands.Cog):
         try:
             guild_id = interaction.guild_id
 
+            # Get active strikes for this player
+            active_strikes = StrikeQueries.get_active_strikes(guild_id, in_game_id)
+
+            if not active_strikes:
+                await interaction.response.send_message(
+                    f"No active strikes found for player `{in_game_id}`.",
+                    ephemeral=True
+                )
+                return
+
+            # Find the strike to remove
+            if strike_number is not None:
+                # Find specific strike by number
+                strike_to_remove = next(
+                    (s for s in active_strikes if s['strike_number'] == strike_number),
+                    None
+                )
+                if not strike_to_remove:
+                    await interaction.response.send_message(
+                        f"No active strike #{strike_number} found for player `{in_game_id}`.\n"
+                        f"Active strikes: {', '.join(str(s['strike_number']) for s in active_strikes)}",
+                        ephemeral=True
+                    )
+                    return
+            else:
+                # Remove the most recent (highest numbered) strike
+                strike_to_remove = active_strikes[-1]
+
             # Remove the strike
-            if StrikeQueries.remove_strike(strike_id):
+            if StrikeQueries.remove_strike(strike_to_remove['id']):
                 AuditQueries.log(
                     guild_id=guild_id,
                     action_type=AuditQueries.ACTION_STRIKE_REMOVED,
                     performed_by_id=interaction.user.id,
                     performed_by_name=str(interaction.user),
-                    details={'strike_id': strike_id}
+                    target_player_name=strike_to_remove['player_name'],
+                    details={
+                        'strike_id': strike_to_remove['id'],
+                        'in_game_id': in_game_id,
+                        'strike_number': strike_to_remove['strike_number']
+                    }
                 )
 
+                remaining = len(active_strikes) - 1
                 await interaction.response.send_message(
-                    f"Strike #{strike_id} has been removed.",
-                    ephemeral=True
+                    f"Removed strike #{strike_to_remove['strike_number']} from **{strike_to_remove['player_name']}** (`{in_game_id}`).\n"
+                    f"Remaining active strikes: **{remaining}**"
                 )
             else:
                 await interaction.response.send_message(
-                    f"Strike #{strike_id} not found.",
+                    "Failed to remove strike. Please try again.",
                     ephemeral=True
                 )
 
@@ -294,6 +355,90 @@ class StrikeCommands(commands.Cog):
             logger.error(f"Error in /removestrike: {e}", exc_info=True)
             await interaction.response.send_message(
                 "An error occurred while removing the strike.",
+                ephemeral=True
+            )
+
+    @app_commands.command(
+        name="strikehistory",
+        description="View full strike history for a player"
+    )
+    @app_commands.guild_only()
+    @app_commands.describe(
+        in_game_id="The player's Alderon ID (XXX-XXX-XXX)"
+    )
+    async def strike_history(self, interaction: discord.Interaction, in_game_id: str):
+        """View full strike history for a player (all strikes including removed/expired)."""
+
+        if not await require_admin(interaction):
+            return
+
+        try:
+            guild_id = interaction.guild_id
+            GuildQueries.get_or_create(guild_id, interaction.guild.name)
+
+            all_strikes = StrikeQueries.get_player_strikes(guild_id, in_game_id)
+
+            if not all_strikes:
+                await interaction.response.send_message(
+                    f"No strike history found for player with ID `{in_game_id}`.",
+                    ephemeral=True
+                )
+                return
+
+            # Get player name from most recent strike
+            player_name = all_strikes[-1]['player_name']
+            active_count = sum(1 for s in all_strikes if s['is_active'])
+            total_count = len(all_strikes)
+
+            embed = discord.Embed(
+                title=f"Strike History for {player_name}",
+                description=f"Alderon ID: `{in_game_id}`\n"
+                           f"Active: **{active_count}** | Total: **{total_count}**",
+                color=discord.Color.blue()
+            )
+
+            for strike in all_strikes:
+                # Determine status
+                if strike['is_active']:
+                    status = "🔴 Active"
+                elif strike.get('expiry_reason') == 'auto_expired':
+                    status = "⏰ Expired"
+                else:
+                    status = "⚪ Removed"
+
+                embed.add_field(
+                    name=f"Strike #{strike['strike_number']} - {status}",
+                    value=f"**Reason:** {strike['reason'][:100]}{'...' if len(strike['reason']) > 100 else ''}\n"
+                          f"**By:** {strike['admin_name']}\n"
+                          f"**Date:** {strike['created_at'].strftime('%Y-%m-%d %H:%M')}",
+                    inline=False
+                )
+
+                # Discord embeds have a limit of 25 fields
+                if len(embed.fields) >= 20:
+                    embed.add_field(
+                        name="...",
+                        value=f"*{total_count - 20} more strikes not shown*",
+                        inline=False
+                    )
+                    break
+
+            # Check if banned
+            ban = StrikeQueries.get_ban(guild_id, in_game_id)
+            if ban:
+                embed.add_field(
+                    name="🚫 BANNED",
+                    value=f"Banned on {ban['banned_at'].strftime('%Y-%m-%d')}\n"
+                          f"Reason: {ban['reason'][:50]}...",
+                    inline=False
+                )
+
+            await interaction.response.send_message(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in /strikehistory: {e}", exc_info=True)
+            await interaction.response.send_message(
+                "An error occurred while retrieving strike history.",
                 ephemeral=True
             )
 
