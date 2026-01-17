@@ -26,6 +26,7 @@ class ConfigCommands(commands.Cog):
         name="setup",
         description="View or configure bot settings for this server"
     )
+    @app_commands.guild_only()
     async def setup(self, interaction: discord.Interaction):
         """Display current bot configuration."""
 
@@ -120,6 +121,7 @@ class ConfigCommands(commands.Cog):
         name="setadminrole",
         description="Add or update an admin role"
     )
+    @app_commands.guild_only()
     @app_commands.describe(
         role="The role to add as admin",
         level="Permission level (1=Mod, 2=Admin, 3=Owner)"
@@ -177,6 +179,7 @@ class ConfigCommands(commands.Cog):
         name="removeadminrole",
         description="Remove an admin role"
     )
+    @app_commands.guild_only()
     @app_commands.describe(
         role="The role to remove from admins"
     )
@@ -219,6 +222,7 @@ class ConfigCommands(commands.Cog):
         name="setchannel",
         description="Set a channel for a specific purpose"
     )
+    @app_commands.guild_only()
     @app_commands.describe(
         purpose="What the channel will be used for",
         channel="The channel to use"
@@ -269,6 +273,7 @@ class ConfigCommands(commands.Cog):
         name="feature",
         description="Enable or disable a feature"
     )
+    @app_commands.guild_only()
     @app_commands.describe(
         feature="The feature to toggle",
         enabled="Enable or disable the feature"
@@ -322,6 +327,7 @@ class ConfigCommands(commands.Cog):
         name="help",
         description="List all available commands"
     )
+    @app_commands.guild_only()
     async def help_command(self, interaction: discord.Interaction):
         """Display help information."""
 

@@ -93,6 +93,7 @@ class RoleSelection(commands.Cog):
         name="rolepanel",
         description="Create a role selection panel"
     )
+    @app_commands.guild_only()
     @app_commands.describe(
         panel_type="Type of role panel to create",
         channel="Channel to post the panel in (default: current channel)"
@@ -291,6 +292,7 @@ class RoleSelection(commands.Cog):
         name="refreshroles",
         description="Refresh the role panel cache (use if reactions stopped working)"
     )
+    @app_commands.guild_only()
     async def refresh_roles(self, interaction: discord.Interaction):
         """Manually refresh the role cache."""
 
@@ -307,6 +309,7 @@ class RoleSelection(commands.Cog):
         name="listroles",
         description="List all active role panels in this server"
     )
+    @app_commands.guild_only()
     async def list_role_panels(self, interaction: discord.Interaction):
         """List all role selection panels."""
 

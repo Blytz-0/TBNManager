@@ -26,6 +26,7 @@ class StrikeCommands(commands.Cog):
         name="addstrike",
         description="Add a strike to a player"
     )
+    @app_commands.guild_only()
     @app_commands.describe(
         player_name="The player's in-game name",
         in_game_id="The player's Alderon ID (XXX-XXX-XXX)",
@@ -189,6 +190,7 @@ class StrikeCommands(commands.Cog):
         name="strikes",
         description="View strikes for a player"
     )
+    @app_commands.guild_only()
     @app_commands.describe(
         in_game_id="The player's Alderon ID (XXX-XXX-XXX)"
     )
@@ -255,6 +257,7 @@ class StrikeCommands(commands.Cog):
         name="removestrike",
         description="Remove a specific strike from a player"
     )
+    @app_commands.guild_only()
     @app_commands.describe(
         strike_id="The strike ID to remove (shown in /strikes)"
     )
@@ -298,6 +301,7 @@ class StrikeCommands(commands.Cog):
         name="clearstrikes",
         description="Clear all strikes for a player"
     )
+    @app_commands.guild_only()
     @app_commands.describe(
         in_game_id="The player's Alderon ID (XXX-XXX-XXX)"
     )
@@ -340,6 +344,7 @@ class StrikeCommands(commands.Cog):
         name="recentstrikes",
         description="View recent strikes in this server"
     )
+    @app_commands.guild_only()
     async def recent_strikes(self, interaction: discord.Interaction):
         """View the most recent strikes."""
 
@@ -388,6 +393,7 @@ class StrikeCommands(commands.Cog):
         name="unban",
         description="Unban a player"
     )
+    @app_commands.guild_only()
     @app_commands.describe(
         in_game_id="The player's Alderon ID (XXX-XXX-XXX)"
     )
@@ -450,6 +456,7 @@ class StrikeCommands(commands.Cog):
         name="bans",
         description="View all banned players in this server"
     )
+    @app_commands.guild_only()
     @app_commands.describe(
         show_unbanned="Also show players who were unbanned"
     )

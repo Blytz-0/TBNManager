@@ -29,6 +29,7 @@ class ModerationCommands(commands.Cog):
         name="announce",
         description="Send an announcement to a channel"
     )
+    @app_commands.guild_only()
     @app_commands.describe(
         channel="The channel to send the announcement to",
         title="Title of the announcement",
@@ -125,6 +126,7 @@ class ModerationCommands(commands.Cog):
         name="say",
         description="Send a message as the bot to a channel"
     )
+    @app_commands.guild_only()
     @app_commands.describe(
         channel="The channel to send the message to",
         message="The message to send (use \\n for new lines)"
@@ -166,6 +168,7 @@ class ModerationCommands(commands.Cog):
         name="clear",
         description="Delete messages from the current channel"
     )
+    @app_commands.guild_only()
     @app_commands.describe(
         amount="Number of messages to delete (1-100)",
         user="Only delete messages from this user"
@@ -249,6 +252,7 @@ class ModerationCommands(commands.Cog):
         name="serverinfo",
         description="Display information about this server"
     )
+    @app_commands.guild_only()
     async def server_info(self, interaction: discord.Interaction):
         """Display server information."""
 
@@ -278,6 +282,7 @@ class ModerationCommands(commands.Cog):
         name="userinfo",
         description="Display information about a user"
     )
+    @app_commands.guild_only()
     @app_commands.describe(
         user="The user to get info about (default: yourself)"
     )

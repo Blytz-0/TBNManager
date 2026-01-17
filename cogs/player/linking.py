@@ -25,6 +25,7 @@ class PlayerLinking(commands.Cog):
         name="alderonid",
         description="Link your Discord account to your Alderon ID"
     )
+    @app_commands.guild_only()
     @app_commands.describe(
         playerid="Your Alderon ID in format XXX-XXX-XXX",
         playername="Your in-game player name"
@@ -117,6 +118,7 @@ class PlayerLinking(commands.Cog):
         name="playerid",
         description="Look up a player's ID or Discord username"
     )
+    @app_commands.guild_only()
     @app_commands.describe(
         query="Discord username or Alderon ID (XXX-XXX-XXX)"
     )
@@ -188,6 +190,7 @@ class PlayerLinking(commands.Cog):
         name="myid",
         description="View your linked Alderon ID"
     )
+    @app_commands.guild_only()
     async def my_id(self, interaction: discord.Interaction):
         """View your own linked player info."""
 

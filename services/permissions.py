@@ -117,10 +117,20 @@ async def require_admin(interaction: discord.Interaction,
         True if user has permission, False otherwise
     """
 
+    # Check if command is being used in a guild
+    if not interaction.guild:
+        await interaction.response.send_message(
+            "This command can only be used in a server, not in DMs.",
+            ephemeral=True
+        )
+        return False
+
     if interaction.user.bot:
         return False
 
-    level = get_permission_level(interaction.user, interaction.guild_id)
+    # In a guild, interaction.user is a Member, not User
+    member = interaction.user
+    level = get_permission_level(member, interaction.guild_id)
 
     if level >= min_level:
         return True
