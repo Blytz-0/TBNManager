@@ -1,4 +1,19 @@
-
+# Environment and secrets
 .env
-.__pycache__
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE/Editor
 .qodo
+.vscode/
+.idea/
+
+# Database files (local development)
+*.db
+
+# OS files
+.DS_Store
+Thumbs.db
