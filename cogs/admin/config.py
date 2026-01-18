@@ -395,6 +395,21 @@ class ConfigCommands(commands.Cog):
             inline=False
         )
 
+        # Ticket commands
+        ticket_cmds = [
+            "`/ticketpanel` - Create a ticket panel",
+            "`/tickets` - View open tickets",
+            "`/close` - Close a ticket (in ticket channel)",
+            "`/claim` - Claim a ticket",
+            "`/adduser` - Add a user to a ticket",
+            "`/removeuser` - Remove a user from a ticket",
+        ]
+        embed.add_field(
+            name="Ticket Commands (Admin)",
+            value="\n".join(ticket_cmds),
+            inline=False
+        )
+
         embed.set_footer(text="TBNManager - Server Administration Bot")
 
         await interaction.response.send_message(embed=embed, ephemeral=True)

@@ -44,6 +44,7 @@ COGS = [
     'cogs.admin.strikes',
     'cogs.admin.moderation',
     'cogs.admin.config',
+    'cogs.admin.tickets',
 ]
 
 

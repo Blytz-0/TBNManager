@@ -5,5 +5,6 @@ from .guilds import GuildQueries
 from .players import PlayerQueries
 from .strikes import StrikeQueries
 from .audit import AuditQueries
+from .tickets import TicketQueries
 
-__all__ = ['GuildQueries', 'PlayerQueries', 'StrikeQueries', 'AuditQueries']
+__all__ = ['GuildQueries', 'PlayerQueries', 'StrikeQueries', 'AuditQueries', 'TicketQueries']

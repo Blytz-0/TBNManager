@@ -127,7 +127,10 @@ class StrikeCommands(commands.Cog):
 
             # DM the user if linked and feature enabled
             if user_id and GuildQueries.is_feature_enabled(guild_id, 'dm_notifications'):
-                await self._notify_user(interaction.guild, user_id, strike_number, reason)
+                await self._notify_user(
+                    interaction.guild, user_id, strike_number, reason,
+                    admin_name=str(interaction.user), in_game_id=in_game_id
+                )
 
         except Exception as e:
             logger.error(f"Error in /addstrike: {e}", exc_info=True)
@@ -165,26 +168,81 @@ class StrikeCommands(commands.Cog):
         )
 
     async def _notify_user(self, guild: discord.Guild, user_id: int,
-                          strike_number: int, reason: str):
+                          strike_number: int, reason: str,
+                          admin_name: str = None, in_game_id: str = None):
         """Send DM notification to user about their strike."""
         try:
             member = guild.get_member(user_id)
-            if member:
-                embed = discord.Embed(
-                    title=f"You have received Strike #{strike_number}",
-                    description=f"**Server:** {guild.name}",
-                    color=discord.Color.red()
+            if not member:
+                return
+
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            expiry_date = now + timedelta(days=30 * strike_number)
+
+            # Determine color based on severity
+            if strike_number == 1:
+                color = discord.Color.yellow()
+            elif strike_number == 2:
+                color = discord.Color.orange()
+            else:
+                color = discord.Color.red()
+
+            embed = discord.Embed(
+                title=f"Strike #{strike_number} Received",
+                description=f"You have received a strike on **{guild.name}**",
+                color=color,
+                timestamp=now
+            )
+
+            # Strike details
+            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(name="Issued On", value=now.strftime("%d %B %Y at %H:%M"), inline=True)
+            embed.add_field(name="Issued By", value=admin_name or "Staff", inline=True)
+
+            if in_game_id:
+                embed.add_field(name="Player ID", value=f"`{in_game_id}`", inline=True)
+
+            # Expiry info
+            embed.add_field(
+                name="Strike Expiry",
+                value=f"This strike will automatically expire on **{expiry_date.strftime('%d %B %Y')}** "
+                      f"(in {30 * strike_number} days) if no further strikes are issued.",
+                inline=False
+            )
+
+            # Current status
+            status_text = f"You currently have **{strike_number}** active strike(s)."
+            if strike_number == 1:
+                status_text += "\nThis is your first strike - please review the server rules to avoid further action."
+            elif strike_number == 2:
+                status_text += "\n**This is your final warning.** One more strike will result in a ban."
+
+            embed.add_field(name="Current Status", value=status_text, inline=False)
+
+            # Warning for 3rd strike
+            if strike_number >= 3:
+                embed.add_field(
+                    name="🚫 BAN IMMINENT",
+                    value="You have reached **3 strikes** and are now subject to a ban.\n"
+                          "If you believe this is unfair, you may appeal by opening a ticket in the server.",
+                    inline=False
                 )
-                embed.add_field(name="Reason", value=reason, inline=False)
 
-                if strike_number >= 3:
-                    embed.add_field(
-                        name="⚠️ Warning",
-                        value="You have reached 3 strikes and may be banned.",
-                        inline=False
-                    )
+            # Guidelines reminder
+            embed.add_field(
+                name="📋 Server Guidelines",
+                value="Please review and follow the server rules to avoid further strikes.\n"
+                      "Repeated violations will result in a permanent ban.",
+                inline=False
+            )
 
-                await member.send(embed=embed)
+            embed.set_footer(text=f"{guild.name} • Moderation System")
+            if guild.icon:
+                embed.set_thumbnail(url=guild.icon.url)
+
+            await member.send(embed=embed)
+
         except discord.Forbidden:
             logger.warning(f"Could not DM user {user_id} about strike")
         except Exception as e:
@@ -678,6 +736,63 @@ class BanConfirmationView(discord.ui.View):
         self.banned_by = banned_by
         self.user_id = user_id
 
+    async def _send_ban_notification(self, guild: discord.Guild):
+        """Send ban notification DM to the user."""
+        if not self.user_id:
+            return
+
+        try:
+            member = guild.get_member(self.user_id)
+            if not member:
+                return
+
+            from datetime import datetime
+            now = datetime.now()
+
+            embed = discord.Embed(
+                title="🚫 You Have Been Banned",
+                description=f"You have been banned from **{guild.name}**",
+                color=discord.Color.dark_red(),
+                timestamp=now
+            )
+
+            embed.add_field(name="Reason", value=self.reason, inline=False)
+            embed.add_field(name="Banned On", value=now.strftime("%d %B %Y at %H:%M"), inline=True)
+            embed.add_field(name="Banned By", value=str(self.banned_by), inline=True)
+            embed.add_field(name="Player ID", value=f"`{self.in_game_id}`", inline=True)
+
+            embed.add_field(
+                name="📋 What This Means",
+                value="• You have been banned from the game server\n"
+                      "• You will not be able to rejoin until unbanned\n"
+                      "• This ban is logged in our moderation system",
+                inline=False
+            )
+
+            embed.add_field(
+                name="⚖️ Appeal Process",
+                value="If you believe this ban was issued in error, you may appeal.\n"
+                      "**To appeal:** Open a ticket in the server (if you still have access) "
+                      "or contact a staff member directly.\n\n"
+                      "Please provide:\n"
+                      "• Your Player ID\n"
+                      "• Reason you believe the ban is unfair\n"
+                      "• Any evidence to support your case",
+                inline=False
+            )
+
+            embed.set_footer(text=f"{guild.name} • Moderation System")
+            if guild.icon:
+                embed.set_thumbnail(url=guild.icon.url)
+
+            await member.send(embed=embed)
+            logger.info(f"Sent ban notification to user {self.user_id}")
+
+        except discord.Forbidden:
+            logger.warning(f"Could not DM user {self.user_id} about ban")
+        except Exception as e:
+            logger.error(f"Error sending ban notification: {e}")
+
     @discord.ui.button(label="Yes, banned in-game", style=discord.ButtonStyle.danger)
     async def confirm_ban(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Confirm the in-game ban."""
@@ -703,6 +818,10 @@ class BanConfirmationView(discord.ui.View):
             target_player_name=self.player_name,
             details={'in_game_id': self.in_game_id, 'reason': self.reason, 'in_game': True}
         )
+
+        # Send ban notification if DM notifications enabled
+        if GuildQueries.is_feature_enabled(self.guild_id, 'dm_notifications'):
+            await self._send_ban_notification(interaction.guild)
 
         await interaction.response.edit_message(
             content=f"✅ **{self.player_name}** (`{self.in_game_id}`) has been recorded as banned.",
@@ -733,6 +852,10 @@ class BanConfirmationView(discord.ui.View):
             target_player_name=self.player_name,
             details={'in_game_id': self.in_game_id, 'reason': self.reason, 'in_game': False}
         )
+
+        # Send ban notification if DM notifications enabled
+        if GuildQueries.is_feature_enabled(self.guild_id, 'dm_notifications'):
+            await self._send_ban_notification(interaction.guild)
 
         await interaction.response.edit_message(
             content=f"📋 **{self.player_name}** (`{self.in_game_id}`) has been recorded. "
