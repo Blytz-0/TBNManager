@@ -13,6 +13,10 @@ import logging
 # ===========================================
 TOKEN = config('TOKEN')
 
+# Development settings - set TEST_GUILD_ID for instant command sync
+# Leave empty or remove for global sync (production)
+TEST_GUILD_ID = config('TEST_GUILD_ID', default=None, cast=lambda x: int(x) if x else None)
+
 # ===========================================
 # DATABASE CONFIGURATION
 # ===========================================
@@ -39,6 +43,7 @@ PERMISSION_LEVELS = {
 # Feature flags that can be toggled per-guild
 DEFAULT_FEATURES = [
     'strikes',
+    'tickets',
     'player_linking',
     'role_selection',
     'announcements',

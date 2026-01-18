@@ -383,3 +383,163 @@ class TicketQueries:
                 (guild_id,)
             )
             return cursor.fetchone()
+
+    # ==========================================
+    # TICKET BUTTON TYPE OPERATIONS
+    # ==========================================
+
+    @staticmethod
+    def create_button_type(panel_id: int, button_label: str, button_emoji: str = None,
+                           button_style: int = 1, form_title: str = "Open Ticket",
+                           form_fields: list = None, welcome_template: str = None,
+                           channel_name_pattern: str = "ticket-{number}") -> dict:
+        """Create a new button type for a ticket panel."""
+        with get_cursor() as cursor:
+            # Get next order number
+            cursor.execute(
+                "SELECT COALESCE(MAX(button_order), -1) + 1 as next_order FROM ticket_button_types WHERE panel_id = %s",
+                (panel_id,)
+            )
+            next_order = cursor.fetchone()['next_order']
+
+            cursor.execute(
+                """INSERT INTO ticket_button_types
+                   (panel_id, button_label, button_emoji, button_style, button_order,
+                    form_title, form_fields, welcome_template, channel_name_pattern)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (panel_id, button_label, button_emoji, button_style, next_order,
+                 form_title, json.dumps(form_fields) if form_fields else None,
+                 welcome_template, channel_name_pattern)
+            )
+            button_id = cursor.lastrowid
+
+            logger.info(f"Created button type {button_id} for panel {panel_id}")
+            return {
+                'id': button_id,
+                'panel_id': panel_id,
+                'button_label': button_label,
+                'button_emoji': button_emoji,
+                'button_style': button_style,
+                'button_order': next_order,
+                'form_title': form_title,
+                'form_fields': form_fields
+            }
+
+    @staticmethod
+    def get_button_type(button_id: int) -> dict | None:
+        """Get a button type by ID."""
+        with get_cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM ticket_button_types WHERE id = %s",
+                (button_id,)
+            )
+            button = cursor.fetchone()
+            if button and button.get('form_fields'):
+                button['form_fields'] = json.loads(button['form_fields'])
+            return button
+
+    @staticmethod
+    def get_panel_buttons(panel_id: int) -> list:
+        """Get all button types for a panel."""
+        with get_cursor() as cursor:
+            cursor.execute(
+                """SELECT * FROM ticket_button_types
+                   WHERE panel_id = %s
+                   ORDER BY button_order ASC""",
+                (panel_id,)
+            )
+            buttons = cursor.fetchall()
+            for button in buttons:
+                if button.get('form_fields'):
+                    button['form_fields'] = json.loads(button['form_fields'])
+            return buttons
+
+    @staticmethod
+    def update_button_type(button_id: int, **kwargs) -> bool:
+        """Update a button type."""
+        allowed_fields = ['button_label', 'button_emoji', 'button_style',
+                          'form_title', 'form_fields', 'welcome_template',
+                          'channel_name_pattern', 'button_order']
+
+        updates = []
+        values = []
+        for field, value in kwargs.items():
+            if field in allowed_fields:
+                if field == 'form_fields' and value is not None:
+                    value = json.dumps(value)
+                updates.append(f"{field} = %s")
+                values.append(value)
+
+        if not updates:
+            return False
+
+        values.append(button_id)
+        with get_cursor() as cursor:
+            cursor.execute(
+                f"UPDATE ticket_button_types SET {', '.join(updates)} WHERE id = %s",
+                tuple(values)
+            )
+            return cursor.rowcount > 0
+
+    @staticmethod
+    def delete_button_type(button_id: int) -> bool:
+        """Delete a button type."""
+        with get_cursor() as cursor:
+            cursor.execute("DELETE FROM ticket_button_types WHERE id = %s", (button_id,))
+            return cursor.rowcount > 0
+
+    # ==========================================
+    # ENHANCED TICKET OPERATIONS
+    # ==========================================
+
+    @staticmethod
+    def create_ticket_with_form(guild_id: int, user_id: int, username: str,
+                                channel_id: int = None, panel_id: int = None,
+                                button_type_id: int = None, subject: str = None,
+                                form_responses: dict = None,
+                                appeal_reference_id: str = None) -> dict:
+        """Create a new ticket with form responses."""
+        with get_cursor() as cursor:
+            # Get next ticket number for this guild
+            cursor.execute(
+                "SELECT COALESCE(MAX(ticket_number), 0) + 1 FROM tickets WHERE guild_id = %s",
+                (guild_id,)
+            )
+            ticket_number = cursor.fetchone()['COALESCE(MAX(ticket_number), 0) + 1']
+
+            cursor.execute(
+                """INSERT INTO tickets
+                   (ticket_number, guild_id, channel_id, user_id, username,
+                    panel_id, button_type_id, subject, form_responses,
+                    appeal_reference_id, status)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'open')""",
+                (ticket_number, guild_id, channel_id, user_id, username,
+                 panel_id, button_type_id, subject,
+                 json.dumps(form_responses) if form_responses else None,
+                 appeal_reference_id)
+            )
+            ticket_id = cursor.lastrowid
+
+            logger.info(f"Created ticket #{ticket_number} for {username} in guild {guild_id}")
+            return {
+                'id': ticket_id,
+                'ticket_number': ticket_number,
+                'guild_id': guild_id,
+                'channel_id': channel_id,
+                'user_id': user_id,
+                'username': username,
+                'button_type_id': button_type_id,
+                'form_responses': form_responses,
+                'appeal_reference_id': appeal_reference_id,
+                'status': 'open'
+            }
+
+    @staticmethod
+    def get_ticket_with_details(ticket_id: int) -> dict | None:
+        """Get a ticket with its form responses parsed."""
+        with get_cursor() as cursor:
+            cursor.execute("SELECT * FROM tickets WHERE id = %s", (ticket_id,))
+            ticket = cursor.fetchone()
+            if ticket and ticket.get('form_responses'):
+                ticket['form_responses'] = json.loads(ticket['form_responses'])
+            return ticket

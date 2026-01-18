@@ -8,7 +8,7 @@ Supports multi-guild deployment with per-server configuration.
 
 import discord
 from discord.ext import commands
-from config.settings import TOKEN, LOG_LEVEL
+from config.settings import TOKEN, LOG_LEVEL, TEST_GUILD_ID
 from database.connection import test_connection, close_pool
 from database.queries import GuildQueries
 import logging
@@ -68,18 +68,17 @@ async def on_ready():
         except Exception as e:
             logger.error(f"Failed to load cog {cog}: {e}")
 
-    # Sync commands globally (for production)
-    # For faster testing, you can sync to a specific guild
+    # Sync commands
     try:
-        # Global sync (takes up to an hour to propagate)
-        synced = await bot.tree.sync()
-        logger.info(f"Synced {len(synced)} global command(s)")
-
-        # Optional: Sync to specific guild for instant updates during development
-        # Uncomment and replace with your test guild ID:
-        # test_guild = discord.Object(id=YOUR_GUILD_ID)
-        # await bot.tree.sync(guild=test_guild)
-        # logger.info("Synced commands to test guild")
+        if TEST_GUILD_ID:
+            # Guild-specific sync for instant updates during development
+            test_guild = discord.Object(id=TEST_GUILD_ID)
+            synced = await bot.tree.sync(guild=test_guild)
+            logger.info(f"Synced {len(synced)} command(s) to test guild {TEST_GUILD_ID}")
+        else:
+            # Global sync (takes up to an hour to propagate)
+            synced = await bot.tree.sync()
+            logger.info(f"Synced {len(synced)} global command(s)")
 
     except Exception as e:
         logger.error(f"Failed to sync commands: {e}")

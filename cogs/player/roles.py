@@ -12,45 +12,30 @@ from discord.ext import commands
 from database.queries import GuildQueries, AuditQueries
 from database.connection import get_cursor
 from services.permissions import require_admin
+from config.constants import GENDER_ROLE_EMOJIS, PLATFORM_ROLE_EMOJIS, SERVER_ROLE_EMOJIS
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Default role configurations (can be customized per guild later)
+# Default role configurations using custom emojis from constants
 DEFAULT_ROLE_CONFIGS = {
     'gender': {
         'title': 'Gender Roles',
         'description': 'React to select your pronouns',
         'color': discord.Color.purple(),
-        'roles': {
-            '👨': 'He/Him',
-            '👩': 'She/Her',
-            '🧑': 'They/Them',
-            '❓': 'Any Pronoun',
-        }
+        'roles': GENDER_ROLE_EMOJIS
     },
     'platform': {
         'title': 'Platform Roles',
         'description': 'React to show what platform you play on',
         'color': discord.Color.blue(),
-        'roles': {
-            '🖥️': 'PC',
-            '🎮': 'Playstation',
-            '🟢': 'Xbox',
-            '🔴': 'Nintendo',
-            '📱': 'Mobile',
-        }
+        'roles': PLATFORM_ROLE_EMOJIS
     },
     'notifications': {
         'title': 'Notification Roles',
         'description': 'React to receive specific notifications',
         'color': discord.Color.gold(),
-        'roles': {
-            '📕': 'Rule Changes',
-            '🚨': 'Server Restarts',
-            '📌': 'Event Announcements',
-            '📢': 'Community Announcements',
-        }
+        'roles': SERVER_ROLE_EMOJIS
     }
 }
 

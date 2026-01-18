@@ -280,6 +280,7 @@ class ConfigCommands(commands.Cog):
     )
     @app_commands.choices(feature=[
         app_commands.Choice(name="Strikes", value="strikes"),
+        app_commands.Choice(name="Tickets", value="tickets"),
         app_commands.Choice(name="Player Linking", value="player_linking"),
         app_commands.Choice(name="Role Selection", value="role_selection"),
         app_commands.Choice(name="Announcements", value="announcements"),

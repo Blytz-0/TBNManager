@@ -129,7 +129,8 @@ class StrikeCommands(commands.Cog):
             if user_id and GuildQueries.is_feature_enabled(guild_id, 'dm_notifications'):
                 await self._notify_user(
                     interaction.guild, user_id, strike_number, reason,
-                    admin_name=str(interaction.user), in_game_id=in_game_id
+                    admin_name=str(interaction.user), in_game_id=in_game_id,
+                    reference_id=strike.get('reference_id')
                 )
 
         except Exception as e:
@@ -169,7 +170,8 @@ class StrikeCommands(commands.Cog):
 
     async def _notify_user(self, guild: discord.Guild, user_id: int,
                           strike_number: int, reason: str,
-                          admin_name: str = None, in_game_id: str = None):
+                          admin_name: str = None, in_game_id: str = None,
+                          reference_id: str = None):
         """Send DM notification to user about their strike."""
         try:
             member = guild.get_member(user_id)
@@ -203,6 +205,10 @@ class StrikeCommands(commands.Cog):
             if in_game_id:
                 embed.add_field(name="Player ID", value=f"`{in_game_id}`", inline=True)
 
+            # Reference ID for appeals
+            if reference_id:
+                embed.add_field(name="Reference ID", value=f"`{reference_id}`", inline=True)
+
             # Expiry info
             embed.add_field(
                 name="Strike Expiry",
@@ -229,11 +235,13 @@ class StrikeCommands(commands.Cog):
                     inline=False
                 )
 
-            # Guidelines reminder
+            # Appeal info with reference
+            appeal_text = "Please review and follow the server rules to avoid further strikes.\n"
+            if reference_id:
+                appeal_text += f"\n**To appeal:** Open a ticket and provide your Reference ID: `{reference_id}`"
             embed.add_field(
                 name="📋 Server Guidelines",
-                value="Please review and follow the server rules to avoid further strikes.\n"
-                      "Repeated violations will result in a permanent ban.",
+                value=appeal_text,
                 inline=False
             )
 
@@ -736,7 +744,7 @@ class BanConfirmationView(discord.ui.View):
         self.banned_by = banned_by
         self.user_id = user_id
 
-    async def _send_ban_notification(self, guild: discord.Guild):
+    async def _send_ban_notification(self, guild: discord.Guild, reference_id: str = None):
         """Send ban notification DM to the user."""
         if not self.user_id:
             return
@@ -761,6 +769,10 @@ class BanConfirmationView(discord.ui.View):
             embed.add_field(name="Banned By", value=str(self.banned_by), inline=True)
             embed.add_field(name="Player ID", value=f"`{self.in_game_id}`", inline=True)
 
+            # Reference ID for appeals
+            if reference_id:
+                embed.add_field(name="Reference ID", value=f"`{reference_id}`", inline=True)
+
             embed.add_field(
                 name="📋 What This Means",
                 value="• You have been banned from the game server\n"
@@ -769,15 +781,21 @@ class BanConfirmationView(discord.ui.View):
                 inline=False
             )
 
+            # Appeal process with reference ID
+            appeal_text = "If you believe this ban was issued in error, you may appeal.\n"
+            appeal_text += "**To appeal:** Open a ticket in the server (if you still have access) "
+            appeal_text += "or contact a staff member directly.\n\n"
+            if reference_id:
+                appeal_text += f"**Your Reference ID:** `{reference_id}`\n"
+                appeal_text += "Use this ID when opening an appeal ticket.\n\n"
+            appeal_text += "Please provide:\n"
+            appeal_text += "• Your Player ID\n"
+            appeal_text += "• Reason you believe the ban is unfair\n"
+            appeal_text += "• Any evidence to support your case"
+
             embed.add_field(
                 name="⚖️ Appeal Process",
-                value="If you believe this ban was issued in error, you may appeal.\n"
-                      "**To appeal:** Open a ticket in the server (if you still have access) "
-                      "or contact a staff member directly.\n\n"
-                      "Please provide:\n"
-                      "• Your Player ID\n"
-                      "• Reason you believe the ban is unfair\n"
-                      "• Any evidence to support your case",
+                value=appeal_text,
                 inline=False
             )
 
@@ -798,7 +816,7 @@ class BanConfirmationView(discord.ui.View):
         """Confirm the in-game ban."""
 
         # Add ban record
-        StrikeQueries.add_ban(
+        ban = StrikeQueries.add_ban(
             guild_id=self.guild_id,
             player_name=self.player_name,
             in_game_id=self.in_game_id,
@@ -821,7 +839,7 @@ class BanConfirmationView(discord.ui.View):
 
         # Send ban notification if DM notifications enabled
         if GuildQueries.is_feature_enabled(self.guild_id, 'dm_notifications'):
-            await self._send_ban_notification(interaction.guild)
+            await self._send_ban_notification(interaction.guild, reference_id=ban.get('reference_id'))
 
         await interaction.response.edit_message(
             content=f"✅ **{self.player_name}** (`{self.in_game_id}`) has been recorded as banned.",
@@ -832,7 +850,7 @@ class BanConfirmationView(discord.ui.View):
     async def pending_ban(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Mark ban as pending."""
 
-        StrikeQueries.add_ban(
+        ban = StrikeQueries.add_ban(
             guild_id=self.guild_id,
             player_name=self.player_name,
             in_game_id=self.in_game_id,
@@ -855,7 +873,7 @@ class BanConfirmationView(discord.ui.View):
 
         # Send ban notification if DM notifications enabled
         if GuildQueries.is_feature_enabled(self.guild_id, 'dm_notifications'):
-            await self._send_ban_notification(interaction.guild)
+            await self._send_ban_notification(interaction.guild, reference_id=ban.get('reference_id'))
 
         await interaction.response.edit_message(
             content=f"📋 **{self.player_name}** (`{self.in_game_id}`) has been recorded. "
