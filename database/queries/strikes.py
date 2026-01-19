@@ -393,3 +393,37 @@ class StrikeQueries:
             'referenced_strike': strike,
             'referenced_ban': StrikeQueries.get_ban_by_reference(reference_id) if not strike else None
         }
+
+    # ==========================================
+    # COMPLETE HISTORY WIPE
+    # ==========================================
+
+    @staticmethod
+    def wipe_player_history(guild_id: int, in_game_id: str) -> dict:
+        """
+        Completely delete all strike and ban records for a player.
+        This is a hard delete - data cannot be recovered.
+        Returns dict with counts of deleted records.
+        """
+        with get_cursor() as cursor:
+            # Delete all strikes
+            cursor.execute(
+                "DELETE FROM strikes WHERE guild_id = %s AND in_game_id = %s",
+                (guild_id, in_game_id)
+            )
+            strikes_deleted = cursor.rowcount
+
+            # Delete all bans
+            cursor.execute(
+                "DELETE FROM bans WHERE guild_id = %s AND in_game_id = %s",
+                (guild_id, in_game_id)
+            )
+            bans_deleted = cursor.rowcount
+
+            logger.info(f"Wiped history for {in_game_id} in guild {guild_id}: "
+                       f"{strikes_deleted} strikes, {bans_deleted} bans deleted")
+
+            return {
+                'strikes_deleted': strikes_deleted,
+                'bans_deleted': bans_deleted
+            }

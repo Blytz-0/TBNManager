@@ -29,6 +29,13 @@ BUTTON_STYLES = {
     4: discord.ButtonStyle.danger,     # Red
 }
 
+# Default panel description
+DEFAULT_PANEL_DESCRIPTION = """**Need Help?**
+Click the button below to open a support ticket.
+
+Our team will assist you as soon as possible.
+Please be patient and provide as much detail as you can."""
+
 
 class TicketCommands(commands.Cog):
     """Commands for the enhanced ticket system."""
@@ -92,7 +99,8 @@ class TicketCommands(commands.Cog):
     @app_commands.guild_only()
     @app_commands.describe(
         panel_id="The ID of the panel to add the button to",
-        button_type="Type of ticket this button creates"
+        button_type="Type of ticket this button creates",
+        color="Button color (defaults based on type: support=green, appeal/report=red)"
     )
     @app_commands.choices(button_type=[
         app_commands.Choice(name="General Support", value="support"),
@@ -100,11 +108,18 @@ class TicketCommands(commands.Cog):
         app_commands.Choice(name="Rule Violation Report", value="report"),
         app_commands.Choice(name="Custom", value="custom"),
     ])
+    @app_commands.choices(color=[
+        app_commands.Choice(name="Blue", value=1),
+        app_commands.Choice(name="Gray", value=2),
+        app_commands.Choice(name="Green", value=3),
+        app_commands.Choice(name="Red", value=4),
+    ])
     async def add_button(
         self,
         interaction: discord.Interaction,
         panel_id: int,
-        button_type: str
+        button_type: str,
+        color: int = None
     ):
         """Add a button to a ticket panel."""
 
@@ -130,7 +145,7 @@ class TicketCommands(commands.Cog):
             return
 
         # Show the appropriate modal based on button type
-        modal = AddButtonModal(panel_id=panel_id, button_type=button_type)
+        modal = AddButtonModal(panel_id=panel_id, button_type=button_type, color_override=color)
         await interaction.response.send_modal(modal)
 
     @app_commands.command(
@@ -488,9 +503,13 @@ class TicketCommands(commands.Cog):
     # ==========================================
 
     async def _generate_transcript(self, ticket: dict, guild: discord.Guild,
-                                    closed_by: discord.User, reason: str = None) -> discord.Embed:
-        """Generate a transcript embed for a closed ticket."""
+                                    closed_by: discord.User, reason: str = None) -> tuple:
+        """
+        Generate transcript embed and downloadable file for a closed ticket.
+        Returns tuple of (embed, file) where file is a discord.File or None.
+        """
 
+        # Generate summary embed
         embed = discord.Embed(
             title="Ticket Closed",
             color=discord.Color.blue(),
@@ -549,7 +568,91 @@ class TicketCommands(commands.Cog):
 
         embed.set_footer(text=f"{guild.name} • Ticket System")
 
-        return embed
+        # Generate downloadable transcript file
+        transcript_file = await self._generate_transcript_file(ticket, guild, closed_by, reason, messages)
+
+        return embed, transcript_file
+
+    async def _generate_transcript_file(self, ticket: dict, guild: discord.Guild,
+                                         closed_by: discord.User, reason: str,
+                                         messages: list) -> discord.File:
+        """Generate a downloadable text transcript file."""
+        import io
+
+        lines = []
+        lines.append("=" * 60)
+        lines.append(f"TICKET TRANSCRIPT - #{ticket['ticket_number']}")
+        lines.append("=" * 60)
+        lines.append("")
+        lines.append(f"Server: {guild.name}")
+        lines.append(f"Ticket ID: #{ticket['ticket_number']}")
+        lines.append(f"Opened By: {ticket['username']} (ID: {ticket['user_id']})")
+        lines.append(f"Opened At: {ticket['opened_at'].strftime('%Y-%m-%d %H:%M:%S UTC')}")
+
+        if ticket.get('claimed_by_name'):
+            lines.append(f"Claimed By: {ticket['claimed_by_name']}")
+
+        lines.append(f"Closed By: {closed_by} (ID: {closed_by.id})")
+        lines.append(f"Closed At: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}")
+
+        if reason:
+            lines.append(f"Close Reason: {reason}")
+
+        # Form responses
+        if ticket.get('form_responses'):
+            responses = ticket['form_responses']
+            if isinstance(responses, str):
+                responses = json.loads(responses)
+            lines.append("")
+            lines.append("-" * 40)
+            lines.append("FORM RESPONSES")
+            lines.append("-" * 40)
+            for field_name, value in responses.items():
+                if value:
+                    lines.append(f"{field_name}: {value}")
+
+        # Appeal reference
+        if ticket.get('appeal_reference_id'):
+            lines.append(f"Appeal Reference: {ticket['appeal_reference_id']}")
+
+        # Messages
+        lines.append("")
+        lines.append("-" * 40)
+        lines.append(f"MESSAGES ({len(messages)} total)")
+        lines.append("-" * 40)
+        lines.append("")
+
+        for msg in messages:
+            timestamp = msg['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            username = msg['username']
+            content = msg['content'] or "[No text content]"
+
+            lines.append(f"[{timestamp}] {username}:")
+            lines.append(f"  {content}")
+
+            # Attachments
+            if msg.get('attachments'):
+                attachments = msg['attachments']
+                if isinstance(attachments, str):
+                    attachments = json.loads(attachments)
+                for att in attachments:
+                    lines.append(f"  📎 Attachment: {att.get('filename', 'unknown')} - {att.get('url', 'N/A')}")
+
+            if msg.get('deleted'):
+                lines.append("  [MESSAGE DELETED]")
+
+            lines.append("")
+
+        lines.append("=" * 60)
+        lines.append("END OF TRANSCRIPT")
+        lines.append("=" * 60)
+
+        # Create file
+        transcript_content = "\n".join(lines)
+        file_bytes = io.BytesIO(transcript_content.encode('utf-8'))
+        filename = f"transcript-{ticket['ticket_number']}-{guild.id}.txt"
+
+        return discord.File(file_bytes, filename=filename)
 
     # ==========================================
     # MESSAGE LOGGING FOR TRANSCRIPTS
@@ -611,8 +714,8 @@ class CreatePanelModal(discord.ui.Modal, title="Create Ticket Panel"):
     )
 
     description = discord.ui.TextInput(
-        label="Description (supports Discord formatting)",
-        placeholder="**Bold** *italic* __underline__\nUse new lines for formatting",
+        label="Description (leave empty for default)",
+        placeholder="Custom description or leave empty to use default...\n**Bold** *italic* supported",
         style=discord.TextStyle.paragraph,
         max_length=2000,
         required=False
@@ -638,32 +741,50 @@ class CreatePanelModal(discord.ui.Modal, title="Create Ticket Panel"):
         await interaction.response.defer(ephemeral=True)
 
         try:
+            # Use default description if none provided
+            panel_description = self.description.value.strip() if self.description.value else DEFAULT_PANEL_DESCRIPTION
+
             panel = TicketQueries.create_panel(
                 guild_id=interaction.guild_id,
                 channel_id=self.channel.id,
                 title=self.panel_title.value,
-                description=self.description.value or None,
+                description=panel_description,
                 ticket_category_id=self.category.id if self.category else None,
                 transcript_channel_id=self.transcript_channel.id if self.transcript_channel else None,
                 support_role_id=self.support_role.id if self.support_role else None,
                 welcome_message=self.welcome_message.value or None
             )
 
-            # Create default "Open Ticket" button
+            # Create default "General Support" button (green)
             TicketQueries.create_button_type(
                 panel_id=panel['id'],
-                button_label="Open Ticket",
-                button_emoji="🎫",
-                button_style=1,
-                form_title="Open Ticket",
-                form_fields=None,
-                welcome_template=self.welcome_message.value
+                button_label="General Support",
+                button_emoji="💬",
+                button_style=3,  # Green
+                form_title="Open Support Ticket",
+                form_fields=[
+                    {
+                        "name": "topic",
+                        "label": "What do you need help with?",
+                        "placeholder": "Brief summary of your issue",
+                        "required": True,
+                        "style": "short"
+                    },
+                    {
+                        "name": "details",
+                        "label": "Please provide more details",
+                        "placeholder": "Describe your issue or question in detail...",
+                        "required": True,
+                        "style": "long"
+                    }
+                ],
+                welcome_template=self.welcome_message.value or "**General Support**\n\nHow can we help you today?\nA staff member will assist you shortly."
             )
 
             # Create the embed
             embed = discord.Embed(
                 title=self.panel_title.value,
-                description=self.description.value or "Click the button below to open a ticket.",
+                description=panel_description,
                 color=discord.Color.blue()
             )
             embed.set_footer(text=f"{interaction.guild.name} • Support System")
@@ -729,10 +850,11 @@ class AddButtonModal(discord.ui.Modal, title="Add Button to Panel"):
         required=False
     )
 
-    def __init__(self, panel_id: int, button_type: str):
+    def __init__(self, panel_id: int, button_type: str, color_override: int = None):
         super().__init__()
         self.panel_id = panel_id
         self.button_type = button_type
+        self.color_override = color_override  # User-specified color, or None for type default
 
         # Pre-fill based on type
         if button_type == "appeal":
@@ -764,12 +886,12 @@ class AddButtonModal(discord.ui.Modal, title="Add Button to Panel"):
         await interaction.response.defer(ephemeral=True)
 
         try:
-            # Define form fields based on button type
+            # Define form fields and default style based on button type
             form_fields = None
-            button_style = 1  # Primary (blue)
+            default_style = 1  # Primary (blue) as fallback
 
             if self.button_type == "appeal":
-                button_style = 4  # Danger (red)
+                default_style = 4  # Danger (red)
                 form_fields = [
                     {
                         "name": "reference_id",
@@ -794,7 +916,7 @@ class AddButtonModal(discord.ui.Modal, title="Add Button to Panel"):
                     }
                 ]
             elif self.button_type == "report":
-                button_style = 4  # Danger (red)
+                default_style = 4  # Danger (red)
                 form_fields = [
                     {
                         "name": "reported_player",
@@ -826,7 +948,7 @@ class AddButtonModal(discord.ui.Modal, title="Add Button to Panel"):
                     }
                 ]
             elif self.button_type == "support":
-                button_style = 3  # Success (green)
+                default_style = 3  # Success (green)
                 form_fields = [
                     {
                         "name": "topic",
@@ -843,6 +965,9 @@ class AddButtonModal(discord.ui.Modal, title="Add Button to Panel"):
                         "style": "long"
                     }
                 ]
+
+            # Use color override if provided, otherwise use type default
+            button_style = self.color_override if self.color_override is not None else default_style
 
             # Create the button
             button = TicketQueries.create_button_type(
@@ -899,17 +1024,21 @@ class CloseTicketModal(discord.ui.Modal, title="Close Ticket"):
 
             panel = TicketQueries.get_panel(ticket['panel_id']) if ticket['panel_id'] else None
 
-            # Get the cog to generate transcript
+            # Get the cog to generate transcript (returns embed and file)
             cog = interaction.client.get_cog('TicketCommands')
-            transcript_embed = await cog._generate_transcript(
+            transcript_embed, transcript_file = await cog._generate_transcript(
                 ticket, interaction.guild, interaction.user, self.reason.value
             )
 
+            # Send transcript to transcript channel (with file)
             transcript_message = None
             if panel and panel['transcript_channel_id']:
                 transcript_channel = interaction.guild.get_channel(panel['transcript_channel_id'])
                 if transcript_channel:
-                    transcript_message = await transcript_channel.send(embed=transcript_embed)
+                    transcript_message = await transcript_channel.send(
+                        embed=transcript_embed,
+                        file=transcript_file
+                    )
                     TicketQueries.set_transcript(ticket['id'], transcript_message.id)
 
             TicketQueries.close_ticket(
@@ -943,13 +1072,14 @@ class CloseTicketModal(discord.ui.Modal, title="Close Ticket"):
 
             await interaction.followup.send(embed=close_embed)
 
-            # DM the creator
+            # DM the creator with transcript file
             try:
                 creator = interaction.guild.get_member(ticket['user_id'])
                 if creator:
                     dm_embed = discord.Embed(
                         title="Ticket Closed",
-                        description=f"Your ticket in **{interaction.guild.name}** has been closed.",
+                        description=f"Your ticket in **{interaction.guild.name}** has been closed.\n\n"
+                                    f"A transcript of your conversation is attached below.",
                         color=discord.Color.blue(),
                         timestamp=datetime.now()
                     )
@@ -959,9 +1089,15 @@ class CloseTicketModal(discord.ui.Modal, title="Close Ticket"):
                         dm_embed.add_field(name="Reason", value=self.reason.value, inline=False)
 
                     dm_embed.set_footer(text=f"{interaction.guild.name} • Support System")
-                    await creator.send(embed=dm_embed)
+
+                    # Generate a fresh transcript file for the DM (file can only be sent once)
+                    messages = TicketQueries.get_ticket_messages(ticket['id'])
+                    dm_transcript_file = await cog._generate_transcript_file(
+                        ticket, interaction.guild, interaction.user, self.reason.value, messages
+                    )
+                    await creator.send(embed=dm_embed, file=dm_transcript_file)
             except discord.Forbidden:
-                pass
+                pass  # User has DMs disabled
 
             # Delete channel
             await interaction.channel.send("This channel will be deleted in 5 seconds...")
@@ -999,12 +1135,29 @@ class TicketFormModal(discord.ui.Modal):
         try:
             guild_id = interaction.guild_id
 
-            # Check for existing open tickets
-            existing = TicketQueries.get_user_open_tickets(guild_id, interaction.user.id)
-            if existing:
+            # Check ticket limits
+            # 1. Max 3 tickets per user total
+            open_ticket_count = TicketQueries.get_user_open_ticket_count(guild_id, interaction.user.id)
+            if open_ticket_count >= 3:
+                existing = TicketQueries.get_user_open_tickets(guild_id, interaction.user.id)
+                ticket_links = ", ".join([f"<#{t['channel_id']}>" for t in existing[:3]])
                 await interaction.followup.send(
-                    f"You already have an open ticket: <#{existing[0]['channel_id']}>\n"
-                    "Please close that ticket before opening a new one.",
+                    f"You have reached the maximum of **3** open tickets.\n"
+                    f"Your open tickets: {ticket_links}\n\n"
+                    "Please close one of your existing tickets before opening a new one.",
+                    ephemeral=True
+                )
+                return
+
+            # 2. Max 1 ticket per button type
+            existing_same_type = TicketQueries.get_user_open_ticket_by_button_type(
+                guild_id, interaction.user.id, self.button_type['id']
+            )
+            if existing_same_type:
+                await interaction.followup.send(
+                    f"You already have an open **{self.button_type['button_label']}** ticket: "
+                    f"<#{existing_same_type['channel_id']}>\n\n"
+                    "You can only have one ticket of each type open at a time.",
                     ephemeral=True
                 )
                 return
@@ -1209,12 +1362,31 @@ class TicketPanelView(discord.ui.View):
                 )
                 return
 
-            # Check if user has existing tickets
-            existing = TicketQueries.get_user_open_tickets(panel['guild_id'], interaction.user.id)
-            if existing:
+            guild_id = panel['guild_id']
+
+            # Check ticket limits
+            # 1. Max 3 tickets per user total
+            open_ticket_count = TicketQueries.get_user_open_ticket_count(guild_id, interaction.user.id)
+            if open_ticket_count >= 3:
+                existing = TicketQueries.get_user_open_tickets(guild_id, interaction.user.id)
+                ticket_links = ", ".join([f"<#{t['channel_id']}>" for t in existing[:3]])
                 await interaction.response.send_message(
-                    f"You already have an open ticket: <#{existing[0]['channel_id']}>\n"
-                    "Please close that ticket before opening a new one.",
+                    f"You have reached the maximum of **3** open tickets.\n"
+                    f"Your open tickets: {ticket_links}\n\n"
+                    "Please close one of your existing tickets before opening a new one.",
+                    ephemeral=True
+                )
+                return
+
+            # 2. Max 1 ticket per button type
+            existing_same_type = TicketQueries.get_user_open_ticket_by_button_type(
+                guild_id, interaction.user.id, button_type_id
+            )
+            if existing_same_type:
+                await interaction.response.send_message(
+                    f"You already have an open **{button_type['button_label']}** ticket: "
+                    f"<#{existing_same_type['channel_id']}>\n\n"
+                    "You can only have one ticket of each type open at a time.",
                     ephemeral=True
                 )
                 return

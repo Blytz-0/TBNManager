@@ -27,32 +27,33 @@ class StrikeCommands(commands.Cog):
         description="Add a strike to a player"
     )
     @app_commands.guild_only()
-    @app_commands.describe(
-        player_name="The player's in-game name",
-        in_game_id="The player's Alderon ID (XXX-XXX-XXX)",
-        reason="Reason for the strike"
-    )
-    async def add_strike(self, interaction: discord.Interaction,
-                         player_name: str, in_game_id: str, reason: str):
-        """Add a strike to a player."""
+    async def add_strike(self, interaction: discord.Interaction):
+        """Add a strike to a player - opens a modal form."""
 
         # Check admin permissions
         if not await require_admin(interaction):
             return
 
-        await interaction.response.defer()
+        guild_id = interaction.guild_id
+        GuildQueries.get_or_create(guild_id, interaction.guild.name)
 
+        # Check if feature is enabled
+        if not GuildQueries.is_feature_enabled(guild_id, 'strikes'):
+            await interaction.response.send_message(
+                "Strike system is not enabled on this server.",
+                ephemeral=True
+            )
+            return
+
+        # Show the strike modal
+        modal = AddStrikeModal(self)
+        await interaction.response.send_modal(modal)
+
+    async def _process_strike(self, interaction: discord.Interaction,
+                              player_name: str, in_game_id: str, reason: str):
+        """Process a strike after modal submission."""
         try:
             guild_id = interaction.guild_id
-            GuildQueries.get_or_create(guild_id, interaction.guild.name)
-
-            # Check if feature is enabled
-            if not GuildQueries.is_feature_enabled(guild_id, 'strikes'):
-                await interaction.followup.send(
-                    "Strike system is not enabled on this server.",
-                    ephemeral=True
-                )
-                return
 
             # Check if player is already banned
             if StrikeQueries.is_banned(guild_id, in_game_id):
@@ -117,6 +118,10 @@ class StrikeCommands(commands.Cog):
             embed.add_field(name="Strike #", value=str(strike_number), inline=True)
             embed.add_field(name="Reason", value=reason, inline=False)
             embed.add_field(name="Issued By", value=f"{interaction.user.mention} ({admin_display})", inline=True)
+
+            if strike.get('reference_id'):
+                embed.add_field(name="Reference ID", value=f"`{strike['reference_id']}`", inline=True)
+
             embed.set_footer(text="Strikes expire after 30 days each")
 
             await interaction.followup.send(embed=embed)
@@ -134,7 +139,7 @@ class StrikeCommands(commands.Cog):
                 )
 
         except Exception as e:
-            logger.error(f"Error in /addstrike: {e}", exc_info=True)
+            logger.error(f"Error processing strike: {e}", exc_info=True)
             await interaction.followup.send(
                 "An error occurred while adding the strike. Please try again.",
                 ephemeral=True
@@ -664,6 +669,180 @@ class StrikeCommands(commands.Cog):
             )
 
     @app_commands.command(
+        name="ban",
+        description="Directly ban a player (without needing 3 strikes)"
+    )
+    @app_commands.guild_only()
+    async def direct_ban(self, interaction: discord.Interaction):
+        """Directly ban a player - opens a modal form."""
+
+        if not await require_admin(interaction):
+            return
+
+        guild_id = interaction.guild_id
+        GuildQueries.get_or_create(guild_id, interaction.guild.name)
+
+        # Check if feature is enabled
+        if not GuildQueries.is_feature_enabled(guild_id, 'strikes'):
+            await interaction.response.send_message(
+                "Strike/ban system is not enabled on this server.",
+                ephemeral=True
+            )
+            return
+
+        # Show the ban modal
+        modal = DirectBanModal(self)
+        await interaction.response.send_modal(modal)
+
+    async def _process_direct_ban(self, interaction: discord.Interaction,
+                                   player_name: str, in_game_id: str, reason: str):
+        """Process a direct ban after modal submission."""
+        try:
+            guild_id = interaction.guild_id
+
+            # Check if player is already banned
+            if StrikeQueries.is_banned(guild_id, in_game_id):
+                await interaction.followup.send(
+                    f"**{player_name}** (`{in_game_id}`) is already banned.",
+                    ephemeral=True
+                )
+                return
+
+            # Get linked Discord user if exists
+            linked_player = PlayerQueries.get_by_player_id(guild_id, in_game_id)
+            user_id = linked_player['user_id'] if linked_player else None
+
+            # Add the ban (show confirmation for in-game status)
+            view = DirectBanConfirmView(
+                cog=self,
+                guild_id=guild_id,
+                player_name=player_name,
+                in_game_id=in_game_id,
+                reason=reason,
+                banned_by=interaction.user,
+                user_id=user_id
+            )
+
+            await interaction.followup.send(
+                f"Ban **{player_name}** (`{in_game_id}`)?\n"
+                f"**Reason:** {reason}\n\n"
+                f"Has this player been banned in-game?",
+                view=view
+            )
+
+        except Exception as e:
+            logger.error(f"Error processing ban: {e}", exc_info=True)
+            await interaction.followup.send(
+                "An error occurred while processing the ban.",
+                ephemeral=True
+            )
+
+    async def _send_direct_ban_notification(self, guild: discord.Guild, user_id: int,
+                                            player_name: str, in_game_id: str,
+                                            reason: str, admin_name: str,
+                                            reference_id: str = None):
+        """Send DM notification for direct ban."""
+        try:
+            member = guild.get_member(user_id)
+            if not member:
+                return
+
+            from datetime import datetime
+            now = datetime.now()
+
+            embed = discord.Embed(
+                title="🚫 You Have Been Banned",
+                description=f"You have been banned from **{guild.name}**",
+                color=discord.Color.dark_red(),
+                timestamp=now
+            )
+
+            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(name="Banned On", value=now.strftime("%d %B %Y at %H:%M"), inline=True)
+            embed.add_field(name="Banned By", value=admin_name, inline=True)
+            embed.add_field(name="Player ID", value=f"`{in_game_id}`", inline=True)
+
+            if reference_id:
+                embed.add_field(name="Reference ID", value=f"`{reference_id}`", inline=True)
+
+            embed.add_field(
+                name="📋 What This Means",
+                value="• You have been banned from the game server\n"
+                      "• You will not be able to rejoin until unbanned\n"
+                      "• This ban is logged in our moderation system",
+                inline=False
+            )
+
+            appeal_text = "If you believe this ban was issued in error, you may appeal.\n"
+            if reference_id:
+                appeal_text += f"\n**Your Reference ID:** `{reference_id}`\n"
+                appeal_text += "Use this ID when opening an appeal ticket."
+
+            embed.add_field(
+                name="⚖️ Appeal Process",
+                value=appeal_text,
+                inline=False
+            )
+
+            embed.set_footer(text=f"{guild.name} • Moderation System")
+            if guild.icon:
+                embed.set_thumbnail(url=guild.icon.url)
+
+            await member.send(embed=embed)
+
+        except discord.Forbidden:
+            logger.warning(f"Could not DM user {user_id} about direct ban")
+        except Exception as e:
+            logger.error(f"Error sending direct ban notification: {e}")
+
+    @app_commands.command(
+        name="wipehistory",
+        description="Completely delete all strike and ban records for a player"
+    )
+    @app_commands.guild_only()
+    @app_commands.describe(
+        in_game_id="The player's Alderon ID (XXX-XXX-XXX)"
+    )
+    async def wipe_history(self, interaction: discord.Interaction, in_game_id: str):
+        """Completely wipe all records for a player - opens confirmation modal."""
+
+        if not await require_admin(interaction):
+            return
+
+        try:
+            guild_id = interaction.guild_id
+
+            # Get current records to show what will be deleted
+            all_strikes = StrikeQueries.get_player_strikes(guild_id, in_game_id)
+            ban = StrikeQueries.get_ban(guild_id, in_game_id)
+
+            if not all_strikes and not ban:
+                await interaction.response.send_message(
+                    f"No records found for player `{in_game_id}`.",
+                    ephemeral=True
+                )
+                return
+
+            player_name = all_strikes[-1]['player_name'] if all_strikes else ban['player_name']
+
+            # Show confirmation
+            modal = WipeHistoryConfirmModal(
+                guild_id=guild_id,
+                player_name=player_name,
+                in_game_id=in_game_id,
+                strike_count=len(all_strikes),
+                has_ban=ban is not None
+            )
+            await interaction.response.send_modal(modal)
+
+        except Exception as e:
+            logger.error(f"Error in /wipehistory: {e}", exc_info=True)
+            await interaction.response.send_message(
+                "An error occurred.",
+                ephemeral=True
+            )
+
+    @app_commands.command(
         name="bans",
         description="View all banned players in this server"
     )
@@ -728,6 +907,228 @@ class StrikeCommands(commands.Cog):
                 "An error occurred while retrieving bans.",
                 ephemeral=True
             )
+
+
+class AddStrikeModal(discord.ui.Modal, title="Add Strike"):
+    """Modal for adding a strike to a player."""
+
+    player_name = discord.ui.TextInput(
+        label="Player Name",
+        placeholder="Enter the player's in-game name",
+        required=True,
+        max_length=100
+    )
+
+    in_game_id = discord.ui.TextInput(
+        label="Alderon ID",
+        placeholder="XXX-XXX-XXX",
+        required=True,
+        max_length=20
+    )
+
+    reason = discord.ui.TextInput(
+        label="Reason for Strike",
+        placeholder="Describe the rule violation...",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=500
+    )
+
+    def __init__(self, cog):
+        super().__init__()
+        self.cog = cog
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        await self.cog._process_strike(
+            interaction,
+            self.player_name.value,
+            self.in_game_id.value.strip(),
+            self.reason.value
+        )
+
+
+class DirectBanModal(discord.ui.Modal, title="Direct Ban"):
+    """Modal for directly banning a player."""
+
+    player_name = discord.ui.TextInput(
+        label="Player Name",
+        placeholder="Enter the player's in-game name",
+        required=True,
+        max_length=100
+    )
+
+    in_game_id = discord.ui.TextInput(
+        label="Alderon ID",
+        placeholder="XXX-XXX-XXX",
+        required=True,
+        max_length=20
+    )
+
+    reason = discord.ui.TextInput(
+        label="Reason for Ban",
+        placeholder="Describe why this player is being banned...",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=500
+    )
+
+    def __init__(self, cog):
+        super().__init__()
+        self.cog = cog
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        await self.cog._process_direct_ban(
+            interaction,
+            self.player_name.value,
+            self.in_game_id.value.strip(),
+            self.reason.value
+        )
+
+
+class DirectBanConfirmView(discord.ui.View):
+    """View for confirming in-game ban status for direct bans."""
+
+    def __init__(self, cog, guild_id: int, player_name: str, in_game_id: str,
+                 reason: str, banned_by: discord.User, user_id: int | None):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.guild_id = guild_id
+        self.player_name = player_name
+        self.in_game_id = in_game_id
+        self.reason = reason
+        self.banned_by = banned_by
+        self.user_id = user_id
+
+    async def _complete_ban(self, interaction: discord.Interaction, banned_in_game: bool):
+        """Complete the ban process."""
+        # Add the ban
+        ban = StrikeQueries.add_ban(
+            guild_id=self.guild_id,
+            player_name=self.player_name,
+            in_game_id=self.in_game_id,
+            reason=self.reason,
+            banned_by_id=self.banned_by.id,
+            banned_by_name=str(self.banned_by),
+            user_id=self.user_id,
+            banned_in_game=banned_in_game
+        )
+
+        # Log to audit
+        AuditQueries.log(
+            guild_id=self.guild_id,
+            action_type=AuditQueries.ACTION_BAN,
+            performed_by_id=self.banned_by.id,
+            performed_by_name=str(self.banned_by),
+            target_user_id=self.user_id,
+            target_player_name=self.player_name,
+            details={
+                'in_game_id': self.in_game_id,
+                'reason': self.reason,
+                'in_game': banned_in_game,
+                'direct_ban': True
+            }
+        )
+
+        # Create response embed
+        embed = discord.Embed(
+            title="Player Banned",
+            color=discord.Color.dark_red()
+        )
+        embed.add_field(name="Player", value=self.player_name, inline=True)
+        embed.add_field(name="Alderon ID", value=f"`{self.in_game_id}`", inline=True)
+        embed.add_field(name="In-Game Ban", value="Yes" if banned_in_game else "Pending", inline=True)
+        embed.add_field(name="Reason", value=self.reason, inline=False)
+        embed.add_field(name="Banned By", value=self.banned_by.mention, inline=True)
+
+        if ban.get('reference_id'):
+            embed.add_field(name="Reference ID", value=f"`{ban['reference_id']}`", inline=True)
+
+        embed.set_footer(text="Direct ban - no strikes required")
+
+        await interaction.response.edit_message(content=None, embed=embed, view=None)
+
+        # DM the user if linked and feature enabled
+        if self.user_id and GuildQueries.is_feature_enabled(self.guild_id, 'dm_notifications'):
+            await self.cog._send_direct_ban_notification(
+                interaction.guild, self.user_id, self.player_name, self.in_game_id,
+                self.reason, str(self.banned_by), ban.get('reference_id')
+            )
+
+    @discord.ui.button(label="Yes, banned in-game", style=discord.ButtonStyle.danger)
+    async def confirm_in_game(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._complete_ban(interaction, banned_in_game=True)
+
+    @discord.ui.button(label="Not yet", style=discord.ButtonStyle.secondary)
+    async def pending_in_game(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._complete_ban(interaction, banned_in_game=False)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel_ban(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content="Ban cancelled.", view=None)
+
+
+class WipeHistoryConfirmModal(discord.ui.Modal, title="Confirm History Wipe"):
+    """Confirmation modal for wiping player history."""
+
+    confirmation = discord.ui.TextInput(
+        label="Type CONFIRM to proceed",
+        placeholder="CONFIRM",
+        required=True,
+        max_length=10
+    )
+
+    def __init__(self, guild_id: int, player_name: str, in_game_id: str,
+                 strike_count: int, has_ban: bool):
+        super().__init__()
+        self.guild_id = guild_id
+        self.player_name = player_name
+        self.in_game_id = in_game_id
+        self.strike_count = strike_count
+        self.has_ban = has_ban
+
+        # Update the title to show what will be deleted
+        ban_text = " + BAN" if has_ban else ""
+        self.title = f"Wipe {strike_count} strikes{ban_text}?"
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if self.confirmation.value.upper() != "CONFIRM":
+            await interaction.response.send_message(
+                "Wipe cancelled. You must type CONFIRM to proceed.",
+                ephemeral=True
+            )
+            return
+
+        # Perform the wipe
+        result = StrikeQueries.wipe_player_history(self.guild_id, self.in_game_id)
+
+        # Log to audit
+        AuditQueries.log(
+            guild_id=self.guild_id,
+            action_type='history_wiped',
+            performed_by_id=interaction.user.id,
+            performed_by_name=str(interaction.user),
+            target_player_name=self.player_name,
+            details={
+                'in_game_id': self.in_game_id,
+                'strikes_deleted': result['strikes_deleted'],
+                'bans_deleted': result['bans_deleted']
+            }
+        )
+
+        embed = discord.Embed(
+            title="History Wiped",
+            description=f"All records for **{self.player_name}** have been permanently deleted.",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Alderon ID", value=f"`{self.in_game_id}`", inline=True)
+        embed.add_field(name="Strikes Deleted", value=str(result['strikes_deleted']), inline=True)
+        embed.add_field(name="Bans Deleted", value=str(result['bans_deleted']), inline=True)
+        embed.add_field(name="Wiped By", value=interaction.user.mention, inline=False)
+        embed.set_footer(text="This action cannot be undone")
+
+        await interaction.response.send_message(embed=embed)
 
 
 class BanConfirmationView(discord.ui.View):

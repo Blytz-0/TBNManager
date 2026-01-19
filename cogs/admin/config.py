@@ -57,15 +57,24 @@ class ConfigCommands(commands.Cog):
                 premium_text = "Not active"
             embed.add_field(name="Premium Status", value=premium_text, inline=True)
 
-            # Admin roles
+            # Admin roles - organized by level
             if admin_roles:
-                role_text = "\n".join([
-                    f"<@&{r['role_id']}> (Level {r['permission_level']})"
-                    for r in admin_roles[:5]
-                ])
+                level_names = {1: 'Mod', 2: 'Admin', 3: 'Owner'}
+                by_level = {3: [], 2: [], 1: []}
+                for r in admin_roles:
+                    level = r['permission_level']
+                    if level in by_level:
+                        by_level[level].append(f"<@&{r['role_id']}>")
+
+                role_lines = []
+                for level in [3, 2, 1]:
+                    if by_level[level]:
+                        role_lines.append(f"**{level_names[level]}:** {', '.join(by_level[level])}")
+
+                role_text = "\n".join(role_lines) if role_lines else "No roles configured"
             else:
-                role_text = "Using default roles (Owner, Headadmin, Admin, Moderator)"
-            embed.add_field(name="Admin Roles", value=role_text, inline=False)
+                role_text = "_Using defaults: Owner, Headadmin, Admin, Moderator_\nUse `/setadminrole` to customize"
+            embed.add_field(name="Permission Roles", value=role_text, inline=False)
 
             # Channels
             channels_text = []
@@ -219,6 +228,75 @@ class ConfigCommands(commands.Cog):
             )
 
     @app_commands.command(
+        name="adminroles",
+        description="List all configured admin roles and their permission levels"
+    )
+    @app_commands.guild_only()
+    async def list_admin_roles(self, interaction: discord.Interaction):
+        """List all configured admin roles."""
+
+        if not await require_admin(interaction):
+            return
+
+        try:
+            guild_id = interaction.guild_id
+            admin_roles = GuildQueries.get_admin_roles(guild_id)
+
+            embed = discord.Embed(
+                title="Admin Role Configuration",
+                color=discord.Color.blue()
+            )
+
+            level_names = {1: 'Moderator', 2: 'Admin', 3: 'Owner'}
+
+            if admin_roles:
+                # Group by permission level
+                by_level = {3: [], 2: [], 1: []}
+                for r in admin_roles:
+                    level = r['permission_level']
+                    if level in by_level:
+                        by_level[level].append(r['role_id'])
+
+                for level in [3, 2, 1]:
+                    if by_level[level]:
+                        role_mentions = [f"<@&{rid}>" for rid in by_level[level]]
+                        embed.add_field(
+                            name=f"Level {level} - {level_names[level]}",
+                            value="\n".join(role_mentions),
+                            inline=False
+                        )
+
+                embed.set_footer(text="Use /setadminrole to add roles, /removeadminrole to remove them")
+            else:
+                embed.description = (
+                    "No custom admin roles configured.\n\n"
+                    "**Fallback Behavior:**\n"
+                    "• Server owner and Discord Administrators always have full access\n"
+                    "• Roles named 'Owner' → Level 3\n"
+                    "• Roles named 'Headadmin' or 'Admin' → Level 2\n"
+                    "• Roles named 'Moderator' → Level 1\n\n"
+                    "Use `/setadminrole` to configure custom permissions."
+                )
+
+            # Add permission level explanation
+            embed.add_field(
+                name="Permission Levels",
+                value="**Level 3 (Owner):** All commands including owner-level settings\n"
+                      "**Level 2 (Admin):** Most commands, can manage strikes/bans\n"
+                      "**Level 1 (Mod):** Basic moderation commands",
+                inline=False
+            )
+
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        except Exception as e:
+            logger.error(f"Error in /adminroles: {e}", exc_info=True)
+            await interaction.response.send_message(
+                "An error occurred while listing admin roles.",
+                ephemeral=True
+            )
+
+    @app_commands.command(
         name="setchannel",
         description="Set a channel for a specific purpose"
     )
@@ -352,26 +430,28 @@ class ConfigCommands(commands.Cog):
 
         # Strike commands
         strike_cmds = [
-            "`/addstrike` - Add a strike to a player",
+            "`/addstrike` - Add a strike to a player (opens form)",
             "`/strikes` - View active strikes (last 3)",
             "`/strikehistory` - View full strike history",
-            "`/removestrike` - Remove a strike",
-            "`/clearstrikes` - Clear all strikes for a player",
-            "`/recentstrikes` - View recent strikes",
+            "`/removestrike` - Remove a specific strike",
+            "`/clearstrikes` - Clear all active strikes for a player",
+            "`/ban` - Directly ban a player (opens form)",
+            "`/wipehistory` - Permanently delete all records for a player",
+            "`/recentstrikes` - View recent strikes server-wide",
             "`/unban` - Unban a player",
             "`/bans` - List all banned players",
         ]
         embed.add_field(
-            name="Strike Commands (Admin)",
+            name="Strike & Ban Commands (Admin)",
             value="\n".join(strike_cmds),
             inline=False
         )
 
         # Moderation commands
         mod_cmds = [
-            "`/announce` - Send an announcement",
+            "`/announce` - Send a formatted announcement (opens form)",
             "`/say` - Send a message as the bot",
-            "`/clear` - Delete messages",
+            "`/clear` - Delete messages from a channel",
             "`/rolepanel` - Create a role selection panel",
             "`/serverinfo` - View server information",
             "`/userinfo` - View user information",
@@ -384,11 +464,12 @@ class ConfigCommands(commands.Cog):
 
         # Config commands
         config_cmds = [
-            "`/setup` - View bot configuration",
-            "`/setadminrole` - Add an admin role",
-            "`/removeadminrole` - Remove an admin role",
-            "`/setchannel` - Set a channel purpose",
-            "`/feature` - Enable/disable features",
+            "`/setup` - View complete bot configuration",
+            "`/adminroles` - View configured permission roles",
+            "`/setadminrole` - Add/update a role's permission level",
+            "`/removeadminrole` - Remove a role from permissions",
+            "`/setchannel` - Set a channel for logs, announcements, etc.",
+            "`/feature` - Enable/disable bot features",
         ]
         embed.add_field(
             name="Configuration Commands (Admin)",
@@ -398,12 +479,14 @@ class ConfigCommands(commands.Cog):
 
         # Ticket commands
         ticket_cmds = [
-            "`/ticketpanel` - Create a ticket panel",
-            "`/tickets` - View open tickets",
-            "`/close` - Close a ticket (in ticket channel)",
-            "`/claim` - Claim a ticket",
-            "`/adduser` - Add a user to a ticket",
-            "`/removeuser` - Remove a user from a ticket",
+            "`/ticketpanel` - Create a new ticket panel",
+            "`/addbutton` - Add a button to a ticket panel",
+            "`/refreshpanel` - Refresh a panel after changes",
+            "`/listpanels` - List all ticket panels",
+            "`/tickets` - View all open tickets",
+            "`/close` - Close current ticket (in ticket channel)",
+            "`/claim` - Claim a ticket to handle it",
+            "`/adduser` / `/removeuser` - Manage ticket participants",
         ]
         embed.add_field(
             name="Ticket Commands (Admin)",
@@ -411,7 +494,7 @@ class ConfigCommands(commands.Cog):
             inline=False
         )
 
-        embed.set_footer(text="TBNManager - Server Administration Bot")
+        embed.set_footer(text="TBNManager - Server Administration Bot | Use /adminroles to configure permissions")
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

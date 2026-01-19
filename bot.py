@@ -48,6 +48,16 @@ COGS = [
 ]
 
 
+async def load_cogs():
+    """Load all cogs before the bot starts."""
+    for cog in COGS:
+        try:
+            await bot.load_extension(cog)
+            logger.info(f"Loaded cog: {cog}")
+        except Exception as e:
+            logger.error(f"Failed to load cog {cog}: {e}")
+
+
 @bot.event
 async def on_ready():
     """Called when bot is ready and connected."""
@@ -60,19 +70,19 @@ async def on_ready():
     else:
         logger.error("Database connection FAILED - some features may not work")
 
-    # Load cogs
-    for cog in COGS:
-        try:
-            await bot.load_extension(cog)
-            logger.info(f"Loaded cog: {cog}")
-        except Exception as e:
-            logger.error(f"Failed to load cog {cog}: {e}")
-
-    # Sync commands
+    # Sync commands (cogs already loaded in main())
     try:
         if TEST_GUILD_ID:
             # Guild-specific sync for instant updates during development
             test_guild = discord.Object(id=TEST_GUILD_ID)
+
+            # Clear global commands first (prevents duplicates)
+            bot.tree.clear_commands(guild=None)
+            await bot.tree.sync()  # Sync empty global tree
+            logger.info("Cleared global commands")
+
+            # Copy global commands to the guild for instant sync
+            bot.tree.copy_global_to(guild=test_guild)
             synced = await bot.tree.sync(guild=test_guild)
             logger.info(f"Synced {len(synced)} command(s) to test guild {TEST_GUILD_ID}")
         else:
@@ -168,6 +178,9 @@ async def main():
     logger.info("Starting TBNManager bot...")
 
     try:
+        # Load cogs BEFORE starting the bot so commands are registered
+        await load_cogs()
+
         async with bot:
             await bot.start(TOKEN)
     except KeyboardInterrupt:

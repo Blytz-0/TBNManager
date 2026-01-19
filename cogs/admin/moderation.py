@@ -32,95 +32,30 @@ class ModerationCommands(commands.Cog):
     @app_commands.guild_only()
     @app_commands.describe(
         channel="The channel to send the announcement to",
-        title="Title of the announcement",
-        message="The announcement message (use \\n for new lines)",
-        color="Embed color",
         ping_role="Optional role to ping"
     )
-    @app_commands.choices(color=[
-        app_commands.Choice(name="Blue", value="blue"),
-        app_commands.Choice(name="Green", value="green"),
-        app_commands.Choice(name="Red", value="red"),
-        app_commands.Choice(name="Gold", value="gold"),
-        app_commands.Choice(name="Purple", value="purple"),
-    ])
     async def announce(self, interaction: discord.Interaction,
                        channel: discord.TextChannel,
-                       title: str,
-                       message: str,
-                       color: str = "blue",
                        ping_role: discord.Role = None):
-        """Send a formatted announcement."""
+        """Send a formatted announcement - opens a modal."""
 
         if not await require_admin(interaction):
             return
 
-        try:
-            guild_id = interaction.guild_id
-            GuildQueries.get_or_create(guild_id, interaction.guild.name)
+        guild_id = interaction.guild_id
+        GuildQueries.get_or_create(guild_id, interaction.guild.name)
 
-            # Check if feature is enabled
-            if not GuildQueries.is_feature_enabled(guild_id, 'announcements'):
-                await interaction.response.send_message(
-                    "Announcements are not enabled on this server.",
-                    ephemeral=True
-                )
-                return
-
-            # Parse color
-            color_map = {
-                'blue': discord.Color.blue(),
-                'green': discord.Color.green(),
-                'red': discord.Color.red(),
-                'gold': discord.Color.gold(),
-                'purple': discord.Color.purple(),
-            }
-            embed_color = color_map.get(color, discord.Color.blue())
-
-            # Format message (replace \n with actual newlines)
-            formatted_message = message.replace("\\n", "\n")
-
-            # Create embed
-            embed = discord.Embed(
-                title=title,
-                description=formatted_message,
-                color=embed_color
-            )
-            embed.set_footer(text=f"Announced by {interaction.user.display_name}")
-            embed.timestamp = discord.utils.utcnow()
-
-            # Send with optional ping
-            content = ping_role.mention if ping_role else None
-            await channel.send(content=content, embed=embed)
-
-            # Log to audit
-            AuditQueries.log(
-                guild_id=guild_id,
-                action_type='announcement',
-                performed_by_id=interaction.user.id,
-                performed_by_name=str(interaction.user),
-                details={
-                    'channel_id': channel.id,
-                    'title': title
-                }
-            )
-
+        # Check if feature is enabled
+        if not GuildQueries.is_feature_enabled(guild_id, 'announcements'):
             await interaction.response.send_message(
-                f"Announcement sent to {channel.mention}!",
+                "Announcements are not enabled on this server.",
                 ephemeral=True
             )
+            return
 
-        except discord.Forbidden:
-            await interaction.response.send_message(
-                f"I don't have permission to send messages in {channel.mention}.",
-                ephemeral=True
-            )
-        except Exception as e:
-            logger.error(f"Error in /announce: {e}", exc_info=True)
-            await interaction.response.send_message(
-                "An error occurred while sending the announcement.",
-                ephemeral=True
-            )
+        # Show the announcement modal
+        modal = AnnounceModal(channel=channel, ping_role=ping_role)
+        await interaction.response.send_modal(modal)
 
     @app_commands.command(
         name="say",
@@ -324,6 +259,92 @@ class ModerationCommands(commands.Cog):
         embed.add_field(name="Roles", value=str(role_count), inline=True)
 
         await interaction.response.send_message(embed=embed)
+
+
+class AnnounceModal(discord.ui.Modal, title="Create Announcement"):
+    """Modal for creating an announcement."""
+
+    announce_title = discord.ui.TextInput(
+        label="Title",
+        placeholder="Announcement title",
+        required=True,
+        max_length=255
+    )
+
+    message = discord.ui.TextInput(
+        label="Message",
+        placeholder="Your announcement message...\nSupports Discord formatting: **bold** *italic* __underline__",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=2000
+    )
+
+    color = discord.ui.TextInput(
+        label="Color (blue/green/red/gold/purple)",
+        placeholder="blue",
+        default="blue",
+        required=False,
+        max_length=10
+    )
+
+    def __init__(self, channel: discord.TextChannel, ping_role: discord.Role = None):
+        super().__init__()
+        self.channel = channel
+        self.ping_role = ping_role
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            # Parse color
+            color_map = {
+                'blue': discord.Color.blue(),
+                'green': discord.Color.green(),
+                'red': discord.Color.red(),
+                'gold': discord.Color.gold(),
+                'purple': discord.Color.purple(),
+            }
+            embed_color = color_map.get(self.color.value.lower().strip(), discord.Color.blue())
+
+            # Create embed
+            embed = discord.Embed(
+                title=self.announce_title.value,
+                description=self.message.value,
+                color=embed_color
+            )
+            embed.set_footer(text=f"Announced by {interaction.user.display_name}")
+            embed.timestamp = discord.utils.utcnow()
+
+            # Send with optional ping
+            content = self.ping_role.mention if self.ping_role else None
+            await self.channel.send(content=content, embed=embed)
+
+            # Log to audit
+            AuditQueries.log(
+                guild_id=interaction.guild_id,
+                action_type='announcement',
+                performed_by_id=interaction.user.id,
+                performed_by_name=str(interaction.user),
+                details={
+                    'channel_id': self.channel.id,
+                    'title': self.announce_title.value
+                }
+            )
+
+            await interaction.response.send_message(
+                f"Announcement sent to {self.channel.mention}!",
+                ephemeral=True
+            )
+
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                f"I don't have permission to send messages in {self.channel.mention}.",
+                ephemeral=True
+            )
+        except Exception as e:
+            logger.error(f"Error in announce modal: {e}", exc_info=True)
+            await interaction.response.send_message(
+                "An error occurred while sending the announcement.",
+                ephemeral=True
+            )
 
 
 async def setup(bot: commands.Bot):

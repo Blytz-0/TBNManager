@@ -179,6 +179,31 @@ class TicketQueries:
             return cursor.fetchall()
 
     @staticmethod
+    def get_user_open_ticket_count(guild_id: int, user_id: int) -> int:
+        """Get count of open tickets for a user in a guild."""
+        with get_cursor() as cursor:
+            cursor.execute(
+                """SELECT COUNT(*) as count FROM tickets
+                   WHERE guild_id = %s AND user_id = %s AND status != 'closed'""",
+                (guild_id, user_id)
+            )
+            result = cursor.fetchone()
+            return result['count'] if result else 0
+
+    @staticmethod
+    def get_user_open_ticket_by_button_type(guild_id: int, user_id: int, button_type_id: int) -> dict | None:
+        """Check if user has an open ticket of a specific button type."""
+        with get_cursor() as cursor:
+            cursor.execute(
+                """SELECT * FROM tickets
+                   WHERE guild_id = %s AND user_id = %s
+                   AND button_type_id = %s AND status != 'closed'
+                   LIMIT 1""",
+                (guild_id, user_id, button_type_id)
+            )
+            return cursor.fetchone()
+
+    @staticmethod
     def get_open_tickets(guild_id: int, limit: int = 50) -> list:
         """Get all open tickets for a guild."""
         with get_cursor() as cursor:
