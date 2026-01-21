@@ -10,7 +10,7 @@ import discord
 from discord.ext import commands
 from config.settings import TOKEN, LOG_LEVEL, TEST_GUILD_ID
 from database.connection import test_connection, close_pool
-from database.queries import GuildQueries
+from database.queries import GuildQueries, PermissionQueries
 import logging
 import asyncio
 
@@ -67,6 +67,14 @@ async def on_ready():
     # Test database connection
     if test_connection():
         logger.info("Database connection successful")
+
+        # Clean up stale permission entries (from renamed/removed commands)
+        try:
+            cleaned = PermissionQueries.cleanup_stale_commands()
+            if cleaned > 0:
+                logger.info(f"Cleaned up {cleaned} stale permission entries")
+        except Exception as e:
+            logger.warning(f"Could not clean up stale permissions: {e}")
     else:
         logger.error("Database connection FAILED - some features may not work")
 

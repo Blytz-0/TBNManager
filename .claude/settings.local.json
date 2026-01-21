@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile:*)",
+      "Bash(python:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nRename commands for better clarity\n\n- /strikes → /strikelist\n- /bans → /banlist  \n- /tickets → /ticketlist\n- /claim → /claimticket\n- /close → /closeticket\n- /adduser → /ticketadd\n- /removeuser → /ticketremove\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)"
+    ]
+  }
+}

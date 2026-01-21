@@ -87,18 +87,23 @@ class PermissionQueries:
     def get_configured_roles(guild_id: int) -> list:
         """
         Get all roles that have been configured with permissions.
-        Returns list of dicts with role_id and command_count.
+        Returns list of dicts with role_id and allowed_count.
+        Only counts valid commands (filters out renamed/deleted commands).
         """
+        from config.commands import get_all_commands
+        valid_commands = get_all_commands()
+
         with get_cursor() as cursor:
+            # Only count commands that still exist in our command list
+            placeholders = ','.join(['%s'] * len(valid_commands))
             cursor.execute(
-                """SELECT role_id,
-                   SUM(CASE WHEN allowed = TRUE THEN 1 ELSE 0 END) as allowed_count,
-                   COUNT(*) as total_configured
+                f"""SELECT role_id,
+                   SUM(CASE WHEN allowed = TRUE THEN 1 ELSE 0 END) as allowed_count
                    FROM guild_role_permissions
-                   WHERE guild_id = %s
+                   WHERE guild_id = %s AND command_name IN ({placeholders})
                    GROUP BY role_id
                    ORDER BY allowed_count DESC""",
-                (guild_id,)
+                (guild_id, *valid_commands)
             )
             return cursor.fetchall()
 
@@ -147,3 +152,40 @@ class PermissionQueries:
                 (target_role_id, guild_id, source_role_id)
             )
             return cursor.rowcount
+
+    @staticmethod
+    def cleanup_stale_commands(guild_id: int = None) -> int:
+        """
+        Remove permission entries for commands that no longer exist.
+        Call this after renaming/removing commands.
+
+        Args:
+            guild_id: If provided, only clean for this guild. Otherwise clean all.
+
+        Returns:
+            Number of stale entries removed.
+        """
+        from config.commands import get_all_commands
+        valid_commands = get_all_commands()
+
+        with get_cursor() as cursor:
+            placeholders = ','.join(['%s'] * len(valid_commands))
+
+            if guild_id:
+                cursor.execute(
+                    f"""DELETE FROM guild_role_permissions
+                        WHERE guild_id = %s AND command_name NOT IN ({placeholders})""",
+                    (guild_id, *valid_commands)
+                )
+            else:
+                cursor.execute(
+                    f"""DELETE FROM guild_role_permissions
+                        WHERE command_name NOT IN ({placeholders})""",
+                    valid_commands
+                )
+
+            count = cursor.rowcount
+            if count > 0:
+                scope = f"guild {guild_id}" if guild_id else "all guilds"
+                logger.info(f"Cleaned up {count} stale permission entries from {scope}")
+            return count
