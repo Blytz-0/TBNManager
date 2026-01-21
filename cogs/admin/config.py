@@ -567,13 +567,17 @@ class RolePermissionsModal(discord.ui.Modal):
             # Build response
             response_lines = [f"**Permissions updated for {self.role.mention}**\n"]
 
-            if diff['added']:
-                response_lines.append(f"**Enabled:** {', '.join(diff['added'])}")
-            if diff['removed']:
-                response_lines.append(f"**Disabled:** {', '.join(diff['removed'])}")
+            if diff['added'] or diff['removed']:
+                response_lines.append("**Changes:**")
+                if diff['added']:
+                    response_lines.append(f"+ Newly enabled: {', '.join(sorted(diff['added']))}")
+                if diff['removed']:
+                    response_lines.append(f"- Newly disabled: {', '.join(sorted(diff['removed']))}")
+            else:
+                response_lines.append("*No changes made*")
 
             total_commands = get_command_count()
-            response_lines.append(f"\n**{diff['total_enabled']}** of {total_commands} commands enabled")
+            response_lines.append(f"\n**Total:** {diff['total_enabled']} of {total_commands} commands enabled")
 
             # Log the change
             AuditQueries.log(
