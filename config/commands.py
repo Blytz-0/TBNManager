@@ -14,12 +14,12 @@ which is used for:
 COMMAND_CATEGORIES = {
     'Player': ['alderonid', 'playerid', 'myid'],
     'Strikes': [
-        'addstrike', 'strikes', 'strikehistory', 'removestrike',
-        'clearstrikes', 'ban', 'unban', 'bans', 'wipehistory', 'recentstrikes'
+        'addstrike', 'strikelist', 'strikehistory', 'removestrike',
+        'clearstrikes', 'ban', 'unban', 'banlist', 'wipehistory', 'recentstrikes'
     ],
     'Tickets': [
         'ticketpanel', 'addbutton', 'refreshpanel', 'listpanels',
-        'tickets', 'close', 'claim', 'adduser', 'removeuser'
+        'ticketlist', 'closeticket', 'claimticket', 'ticketadd', 'ticketremove'
     ],
     'Moderation': ['announce', 'say', 'clear', 'rolepanel', 'serverinfo', 'userinfo'],
     'Config': ['setup', 'setchannel', 'feature', 'roleperms', 'help']
@@ -29,12 +29,12 @@ COMMAND_CATEGORIES = {
 # When a feature is disabled, these commands are hidden from /help
 FEATURE_COMMANDS = {
     'strikes': [
-        'addstrike', 'strikes', 'strikehistory', 'removestrike',
-        'clearstrikes', 'ban', 'unban', 'bans', 'wipehistory', 'recentstrikes'
+        'addstrike', 'strikelist', 'strikehistory', 'removestrike',
+        'clearstrikes', 'ban', 'unban', 'banlist', 'wipehistory', 'recentstrikes'
     ],
     'tickets': [
         'ticketpanel', 'addbutton', 'refreshpanel', 'listpanels',
-        'tickets', 'close', 'claim', 'adduser', 'removeuser'
+        'ticketlist', 'closeticket', 'claimticket', 'ticketadd', 'ticketremove'
     ],
     'announcements': ['announce'],
     'player_linking': ['alderonid', 'playerid', 'myid'],
@@ -59,13 +59,13 @@ COMMAND_DESCRIPTIONS = {
 
     # Strikes
     'addstrike': 'Add a strike to a player',
-    'strikes': 'View active strikes for a player',
+    'strikelist': 'View active strikes for a player',
     'strikehistory': 'View full strike history',
     'removestrike': 'Remove a specific strike',
     'clearstrikes': 'Clear all active strikes',
     'ban': 'Directly ban a player',
     'unban': 'Unban a player',
-    'bans': 'List all banned players',
+    'banlist': 'List all banned players',
     'wipehistory': 'Permanently delete all records',
     'recentstrikes': 'View recent strikes server-wide',
 
@@ -74,11 +74,11 @@ COMMAND_DESCRIPTIONS = {
     'addbutton': 'Add a button to a ticket panel',
     'refreshpanel': 'Refresh a panel after changes',
     'listpanels': 'List all ticket panels',
-    'tickets': 'View all open tickets',
-    'close': 'Close current ticket',
-    'claim': 'Claim a ticket to handle it',
-    'adduser': 'Add user to ticket',
-    'removeuser': 'Remove user from ticket',
+    'ticketlist': 'View all open tickets',
+    'closeticket': 'Close current ticket',
+    'claimticket': 'Claim a ticket to handle it',
+    'ticketadd': 'Add user to ticket',
+    'ticketremove': 'Remove user from ticket',
 
     # Moderation
     'announce': 'Send a formatted announcement',

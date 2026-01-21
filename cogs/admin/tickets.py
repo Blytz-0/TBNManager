@@ -265,7 +265,7 @@ class TicketCommands(commands.Cog):
     # ==========================================
 
     @app_commands.command(
-        name="tickets",
+        name="ticketlist",
         description="View open tickets in this server"
     )
     @app_commands.guild_only()
@@ -317,7 +317,7 @@ class TicketCommands(commands.Cog):
             )
 
     @app_commands.command(
-        name="close",
+        name="closeticket",
         description="Close the current ticket"
     )
     @app_commands.guild_only()
@@ -344,7 +344,7 @@ class TicketCommands(commands.Cog):
         await interaction.response.send_modal(modal)
 
     @app_commands.command(
-        name="claim",
+        name="claimticket",
         description="Claim the current ticket"
     )
     @app_commands.guild_only()
@@ -400,7 +400,7 @@ class TicketCommands(commands.Cog):
             )
 
     @app_commands.command(
-        name="adduser",
+        name="ticketadd",
         description="Add a user to the current ticket"
     )
     @app_commands.guild_only()
@@ -449,7 +449,7 @@ class TicketCommands(commands.Cog):
             )
 
     @app_commands.command(
-        name="removeuser",
+        name="ticketremove",
         description="Remove a user from the current ticket"
     )
     @app_commands.guild_only()

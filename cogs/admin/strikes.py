@@ -262,7 +262,7 @@ class StrikeCommands(commands.Cog):
             logger.error(f"Error sending strike notification: {e}")
 
     @app_commands.command(
-        name="strikes",
+        name="strikelist",
         description="View active strikes for a player (last 3)"
     )
     @app_commands.guild_only()
@@ -843,7 +843,7 @@ class StrikeCommands(commands.Cog):
             )
 
     @app_commands.command(
-        name="bans",
+        name="banlist",
         description="View all banned players in this server"
     )
     @app_commands.guild_only()
