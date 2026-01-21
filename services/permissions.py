@@ -5,11 +5,12 @@ Permission checking for TBNManager
 Handles role-based permissions with support for:
 - Server owner (always has access)
 - Discord Administrator permission
-- Custom admin roles configured per-guild
+- Granular per-command permissions (new system)
+- Legacy admin roles (fallback during transition)
 """
 
 import discord
-from database.queries import GuildQueries
+from database.queries import GuildQueries, PermissionQueries
 import logging
 
 logger = logging.getLogger(__name__)
@@ -171,3 +172,103 @@ def check_feature_access(guild_id: int, feature_name: str,
         return False, "This feature requires a premium subscription."
 
     return True, ""
+
+
+async def require_permission(interaction: discord.Interaction,
+                             command_name: str,
+                             ephemeral: bool = True) -> bool:
+    """
+    Check if user has permission for a specific command using the new system.
+
+    This checks:
+    1. Server owner - always has full access
+    2. Discord Administrator - always has full access
+    3. Role-based permissions from guild_role_permissions table
+
+    Args:
+        interaction: The Discord interaction
+        command_name: Name of the command being checked
+        ephemeral: Whether error message should be ephemeral
+
+    Returns:
+        True if user has permission, False otherwise
+    """
+    # Check if command is being used in a guild
+    if not interaction.guild:
+        await interaction.response.send_message(
+            "This command can only be used in a server, not in DMs.",
+            ephemeral=True
+        )
+        return False
+
+    if interaction.user.bot:
+        return False
+
+    guild_id = interaction.guild_id
+    user = interaction.user
+
+    # Server owner always has full access
+    if user.id == interaction.guild.owner_id:
+        return True
+
+    # Discord Administrator permission = full access
+    if user.guild_permissions.administrator:
+        return True
+
+    # Check role-based permissions from new system
+    user_role_ids = [role.id for role in user.roles]
+
+    try:
+        if PermissionQueries.can_use_command(guild_id, user_role_ids, command_name):
+            return True
+    except Exception as e:
+        logger.error(f"Error checking command permission: {e}")
+        # On error, fall through to legacy check
+
+    # Fallback to legacy permission system during transition
+    # This allows existing setups to keep working
+    level = get_permission_level(user, guild_id)
+    if level >= 1:  # At least moderator level in old system
+        return True
+
+    # Permission denied
+    await interaction.response.send_message(
+        "You don't have permission to use this command.",
+        ephemeral=ephemeral
+    )
+    return False
+
+
+def get_user_allowed_commands(guild_id: int, member: discord.Member) -> set:
+    """
+    Get all commands a user can access based on their roles.
+
+    Args:
+        guild_id: The guild ID
+        member: The Discord member
+
+    Returns:
+        Set of command names the user can access
+    """
+    from config.commands import get_all_commands
+
+    # Server owner and admins see all
+    if member.id == member.guild.owner_id or member.guild_permissions.administrator:
+        return set(get_all_commands())
+
+    user_role_ids = [role.id for role in member.roles]
+
+    try:
+        allowed = PermissionQueries.get_user_allowed_commands(guild_id, user_role_ids)
+
+        # If new system has no permissions, fall back to legacy check
+        if not allowed:
+            level = get_permission_level(member, guild_id)
+            if level >= 1:
+                # Give legacy admins access to all commands
+                return set(get_all_commands())
+
+        return allowed
+    except Exception as e:
+        logger.error(f"Error getting allowed commands: {e}")
+        return set()
