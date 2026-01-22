@@ -421,6 +421,11 @@ class PlayerLinking(commands.Cog):
                 color=discord.Color.blue()
             )
 
+            # Try to get Discord member for avatar
+            member = interaction.guild.get_member(player['user_id'])
+            if member:
+                embed.set_thumbnail(url=member.display_avatar.url)
+
             # Discord info
             embed.add_field(
                 name="Discord",
@@ -437,10 +442,21 @@ class PlayerLinking(commands.Cog):
                 )
 
             # Steam info
+            steam_avatar_url = None
             if player.get('steam_id'):
+                # Try to get Steam avatar
+                if SteamAPI.is_configured():
+                    try:
+                        steam_data = await SteamAPI.get_player_summary(player['steam_id'])
+                        if steam_data and steam_data.get('avatarmedium'):
+                            steam_avatar_url = steam_data['avatarmedium']
+                    except Exception:
+                        pass
+
+                steam_value = f"**Name:** {player.get('steam_name', 'Unknown')}\n**ID:** `{player['steam_id']}`"
                 embed.add_field(
                     name="Steam",
-                    value=f"**Name:** {player.get('steam_name', 'Unknown')}\n**ID:** `{player['steam_id']}`",
+                    value=steam_value,
                     inline=True
                 )
 
@@ -450,6 +466,10 @@ class PlayerLinking(commands.Cog):
                     value="No game IDs linked",
                     inline=False
                 )
+
+            # Show Steam avatar at bottom if available
+            if steam_avatar_url:
+                embed.set_image(url=steam_avatar_url)
 
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -478,25 +498,40 @@ class PlayerLinking(commands.Cog):
                 color=discord.Color.green()
             )
 
+            # Set Discord avatar as main thumbnail
+            embed.set_thumbnail(url=interaction.user.display_avatar.url)
+
             # Discord - always show
-            # Get display name and username
+            # Get display name and username (username already includes dots if present)
             display_name = interaction.user.display_name
             username = interaction.user.name
             embed.add_field(
                 name="Discord",
-                value=f"@{display_name} (.{username}.)",
+                value=f"@{display_name} ({username})",
                 inline=False
             )
 
             has_ids = False
+            steam_avatar_url = None
 
             # Steam info
             if player and player.get('steam_id'):
                 has_ids = True
+                # Fetch Steam avatar if we have the API configured
+                if SteamAPI.is_configured():
+                    try:
+                        steam_data = await SteamAPI.get_player_summary(player['steam_id'])
+                        if steam_data and steam_data.get('avatarmedium'):
+                            steam_avatar_url = steam_data['avatarmedium']
+                    except Exception:
+                        pass  # Don't fail if we can't get avatar
+
+                steam_value = f"**Steam Name:** {player.get('steam_name', 'Unknown')}\n**Steam ID:** `{player['steam_id']}`"
+                if steam_avatar_url:
+                    steam_value += f"\n[View Profile](https://steamcommunity.com/profiles/{player['steam_id']})"
                 embed.add_field(
                     name="Steam",
-                    value=f"**Steam Name:** {player.get('steam_name', 'Unknown')}\n"
-                          f"**Steam ID:** `{player['steam_id']}`",
+                    value=steam_value,
                     inline=False
                 )
             else:
@@ -521,6 +556,10 @@ class PlayerLinking(commands.Cog):
                     value="Not linked\nUse `/alderonid` to link",
                     inline=False
                 )
+
+            # Set Steam avatar as image if available (shows at bottom)
+            if steam_avatar_url:
+                embed.set_image(url=steam_avatar_url)
 
             if has_ids:
                 embed.set_footer(text="IDs are locked. Contact an admin to change them.")
