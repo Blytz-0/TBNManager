@@ -509,34 +509,44 @@ class TicketCommands(commands.Cog):
         Returns tuple of (embed, file) where file is a discord.File or None.
         """
 
+        # Custom emoji IDs for transcript fields
+        EMOJI_TICKET_ID = "<:ticket_id:1463684156029403138>"
+        EMOJI_OPENED_BY = "<:opened_by:1463684000215339305>"
+        EMOJI_CLOSED_BY = "<:closed_by:1463684647836975196>"
+        EMOJI_OPEN_TIME = "<:open_time:1463684982290645107>"
+        EMOJI_CLAIMED_BY = "<:claimed_by:1463685106110693376>"
+        EMOJI_REASON = "<:reason:1463685273702633614>"
+
         # Generate summary embed
         embed = discord.Embed(
             title="Ticket Closed",
-            color=discord.Color.blue(),
+            color=discord.Color.gold(),
             timestamp=datetime.now()
         )
 
-        embed.add_field(name="Ticket ID", value=str(ticket['ticket_number']), inline=True)
+        embed.add_field(name=f"{EMOJI_TICKET_ID} Ticket ID", value=str(ticket['ticket_number']), inline=True)
 
         opener = guild.get_member(ticket['user_id'])
         opener_text = opener.mention if opener else ticket['username']
-        embed.add_field(name="Opened By", value=opener_text, inline=True)
+        embed.add_field(name=f"{EMOJI_OPENED_BY} Opened By", value=opener_text, inline=True)
 
-        embed.add_field(name="Closed By", value=closed_by.mention, inline=True)
+        embed.add_field(name=f"{EMOJI_CLOSED_BY} Closed By", value=closed_by.mention, inline=True)
 
+        # Discord timestamp format for hover popup
+        opened_timestamp = int(ticket['opened_at'].timestamp())
         embed.add_field(
-            name="Open Time",
-            value=ticket['opened_at'].strftime("%d %B %Y %H:%M"),
+            name=f"{EMOJI_OPEN_TIME} Open Time",
+            value=f"<t:{opened_timestamp}:f>",
             inline=True
         )
 
         if ticket['claimed_by_name']:
-            embed.add_field(name="Claimed By", value=ticket['claimed_by_name'], inline=True)
+            embed.add_field(name=f"{EMOJI_CLAIMED_BY} Claimed By", value=ticket['claimed_by_name'], inline=True)
         else:
-            embed.add_field(name="Claimed By", value="Not claimed", inline=True)
+            embed.add_field(name=f"{EMOJI_CLAIMED_BY} Claimed By", value="Not claimed", inline=True)
 
         embed.add_field(
-            name="Reason",
+            name=f"{EMOJI_REASON} Reason",
             value=reason or "No reason specified",
             inline=False
         )
