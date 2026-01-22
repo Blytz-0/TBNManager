@@ -60,6 +60,12 @@ PREMIUM_FEATURES = [
 ]
 
 # ===========================================
+# STEAM API CONFIGURATION
+# ===========================================
+# Get your API key from: https://steamcommunity.com/dev/apikey
+STEAM_API_KEY = config('STEAM_API_KEY', default=None)
+
+# ===========================================
 # LOGGING CONFIGURATION
 # ===========================================
 LOG_LEVEL = config('LOG_LEVEL', default='INFO')

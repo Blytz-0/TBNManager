@@ -12,7 +12,7 @@ which is used for:
 # All commands organized by category
 # Order matters - this determines the order in INI config and /help
 COMMAND_CATEGORIES = {
-    'Player': ['alderonid', 'playerid', 'myid'],
+    'Player': ['alderonid', 'linksteam', 'playerid', 'myid', 'unlinkid'],
     'Strikes': [
         'addstrike', 'strikelist', 'strikehistory', 'removestrike',
         'clearstrikes', 'ban', 'unban', 'banlist', 'wipehistory', 'recentstrikes'
@@ -37,7 +37,7 @@ FEATURE_COMMANDS = {
         'ticketlist', 'closeticket', 'claimticket', 'ticketadd', 'ticketremove'
     ],
     'announcements': ['announce'],
-    'player_linking': ['alderonid', 'playerid', 'myid'],
+    'player_linking': ['alderonid', 'linksteam', 'playerid', 'myid', 'unlinkid'],
     'role_selection': ['rolepanel'],
 }
 
@@ -48,14 +48,17 @@ RESTRICTED_COMMANDS = [
     'feature',      # Toggles bot features
     'ban',          # Direct ban without strikes
     'clearstrikes', # Removes all strikes
+    'unlinkid',     # Unlocks player IDs (ban evasion risk)
 ]
 
 # Command descriptions for /help display
 COMMAND_DESCRIPTIONS = {
     # Player
     'alderonid': 'Link your Discord to your Alderon ID',
-    'playerid': 'Look up player info by ID or name',
-    'myid': 'View your linked Alderon ID',
+    'linksteam': 'Link your Discord to your Steam ID',
+    'playerid': 'Look up player by Discord, Steam, or Alderon ID',
+    'myid': 'View your linked accounts',
+    'unlinkid': '[Admin] Unlock a user\'s linked ID',
 
     # Strikes
     'addstrike': 'Add a strike to a player',

@@ -1,8 +1,10 @@
 # cogs/player/linking.py
 """
-Player ID Linking Commands
+Player ID Linking Commands (Passport System)
 
-Allows users to link their Discord account to their Alderon game ID.
+Allows users to link their Discord account to:
+- Alderon ID (Path of Titans)
+- Steam ID (The Isle and other games)
 """
 
 import re
@@ -10,16 +12,22 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from database.queries import PlayerQueries, GuildQueries, AuditQueries
+from services.steam_api import SteamAPI, SteamAPIError
+from services.permissions import require_permission
 import logging
 
 logger = logging.getLogger(__name__)
 
 
 class PlayerLinking(commands.Cog):
-    """Commands for linking Discord accounts to Alderon IDs."""
+    """Commands for linking Discord accounts to game IDs."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    # ==========================================
+    # ALDERON ID LINKING
+    # ==========================================
 
     @app_commands.command(
         name="alderonid",
@@ -30,8 +38,8 @@ class PlayerLinking(commands.Cog):
         playerid="Your Alderon ID in format XXX-XXX-XXX",
         playername="Your in-game player name"
     )
-    async def link_id(self, interaction: discord.Interaction,
-                      playerid: str, playername: str):
+    async def link_alderon(self, interaction: discord.Interaction,
+                           playerid: str, playername: str):
         """Link Discord account to Alderon ID."""
 
         # Validate ID format
@@ -70,14 +78,25 @@ class PlayerLinking(commands.Cog):
             existing = PlayerQueries.get_by_player_id(interaction.guild_id, playerid)
             if existing and existing['user_id'] != interaction.user.id:
                 await interaction.response.send_message(
-                    f"This Alderon ID is already linked to another Discord user. "
-                    f"If this is your ID, please contact an admin.",
+                    "This Alderon ID is already linked to another Discord user. "
+                    "If this is your ID, please contact an admin.",
+                    ephemeral=True
+                )
+                return
+
+            # Check if user already has an Alderon ID linked (locked)
+            current = PlayerQueries.get_by_user(interaction.guild_id, interaction.user.id)
+            if current and current.get('player_id') and current['player_id'] != playerid:
+                await interaction.response.send_message(
+                    "You already have an Alderon ID linked to your account.\n"
+                    "Your current ID is locked for security. To change it, please "
+                    "contact an admin to unlock your account via `/unlinkid`.",
                     ephemeral=True
                 )
                 return
 
             # Link the player
-            PlayerQueries.link_player(
+            PlayerQueries.link_alderon(
                 guild_id=interaction.guild_id,
                 user_id=interaction.user.id,
                 username=str(interaction.user),
@@ -92,18 +111,18 @@ class PlayerLinking(commands.Cog):
                 performed_by_id=interaction.user.id,
                 performed_by_name=str(interaction.user),
                 target_user_id=interaction.user.id,
-                details={'player_id': playerid, 'player_name': playername}
+                details={'player_id': playerid, 'player_name': playername, 'type': 'alderon'}
             )
 
             # Create success embed
             embed = discord.Embed(
-                title="Player ID Linked",
+                title="Alderon ID Linked",
                 color=discord.Color.green()
             )
             embed.add_field(name="Discord User", value=interaction.user.mention, inline=True)
             embed.add_field(name="Alderon ID", value=f"`{playerid}`", inline=True)
             embed.add_field(name="Player Name", value=playername, inline=True)
-            embed.set_footer(text="You can update this anytime by running the command again.")
+            embed.set_footer(text="Your ID is now locked. Contact an admin to change it.")
 
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -114,16 +133,232 @@ class PlayerLinking(commands.Cog):
                 ephemeral=True
             )
 
+    # ==========================================
+    # STEAM ID LINKING
+    # ==========================================
+
     @app_commands.command(
-        name="playerid",
-        description="Look up a player's ID or Discord username"
+        name="linksteam",
+        description="Link your Discord account to your Steam ID"
     )
     @app_commands.guild_only()
     @app_commands.describe(
-        query="Discord username or Alderon ID (XXX-XXX-XXX)"
+        steam_id="Your Steam ID (17 digits), vanity URL, or profile link"
+    )
+    async def link_steam(self, interaction: discord.Interaction, steam_id: str):
+        """Link Discord account to Steam ID."""
+
+        try:
+            # Ensure guild exists in database
+            GuildQueries.get_or_create(
+                interaction.guild_id,
+                interaction.guild.name
+            )
+
+            # Check if feature is enabled
+            if not GuildQueries.is_feature_enabled(interaction.guild_id, 'player_linking'):
+                await interaction.response.send_message(
+                    "Player linking is not enabled on this server.",
+                    ephemeral=True
+                )
+                return
+
+            # Check if Steam API is configured
+            if not SteamAPI.is_configured():
+                await interaction.response.send_message(
+                    "Steam linking is not configured on this server. "
+                    "Please contact the bot administrator.",
+                    ephemeral=True
+                )
+                return
+
+            # Check if user already has a Steam ID linked (locked)
+            current = PlayerQueries.get_by_user(interaction.guild_id, interaction.user.id)
+            if current and current.get('steam_id'):
+                await interaction.response.send_message(
+                    "You already have a Steam ID linked to your account.\n"
+                    f"Your current Steam ID: `{current['steam_id']}`\n\n"
+                    "Your ID is locked for security. To change it, please "
+                    "contact an admin to unlock your account via `/unlinkid`.",
+                    ephemeral=True
+                )
+                return
+
+            # Defer response since Steam API call may take time
+            await interaction.response.defer(ephemeral=True)
+
+            # Validate and resolve Steam ID via API
+            steam_data = await SteamAPI.validate_steam_id(steam_id)
+
+            if not steam_data:
+                await interaction.followup.send(
+                    "Could not find a Steam account with that ID.\n"
+                    "Please provide a valid:\n"
+                    "- Steam ID (17 digits, e.g., `76561199003854357`)\n"
+                    "- Vanity URL name (e.g., `gabelogannewell`)\n"
+                    "- Profile URL (e.g., `https://steamcommunity.com/id/username`)",
+                    ephemeral=True
+                )
+                return
+
+            resolved_steam_id = steam_data['steam_id']
+            steam_name = steam_data['personaname']
+
+            # Check if this Steam ID is already linked to someone else
+            existing = PlayerQueries.get_by_steam_id(interaction.guild_id, resolved_steam_id)
+            if existing and existing['user_id'] != interaction.user.id:
+                await interaction.followup.send(
+                    "This Steam ID is already linked to another Discord user. "
+                    "If this is your ID, please contact an admin.",
+                    ephemeral=True
+                )
+                return
+
+            # Link the Steam ID
+            PlayerQueries.link_steam(
+                guild_id=interaction.guild_id,
+                user_id=interaction.user.id,
+                username=str(interaction.user),
+                steam_id=resolved_steam_id,
+                steam_name=steam_name
+            )
+
+            # Log to audit
+            AuditQueries.log(
+                guild_id=interaction.guild_id,
+                action_type=AuditQueries.ACTION_PLAYER_LINKED,
+                performed_by_id=interaction.user.id,
+                performed_by_name=str(interaction.user),
+                target_user_id=interaction.user.id,
+                details={'steam_id': resolved_steam_id, 'steam_name': steam_name, 'type': 'steam'}
+            )
+
+            # Create success embed
+            embed = discord.Embed(
+                title="Steam Account Linked",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="Discord User", value=interaction.user.mention, inline=True)
+            embed.add_field(name="Steam Name", value=steam_name, inline=True)
+            embed.add_field(name="Steam ID", value=f"`{resolved_steam_id}`", inline=True)
+
+            if steam_data.get('avatarmedium'):
+                embed.set_thumbnail(url=steam_data['avatarmedium'])
+
+            embed.set_footer(text="Your ID is now locked. Contact an admin to change it.")
+
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+        except Exception as e:
+            logger.error(f"Error in /linksteam: {e}", exc_info=True)
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    "An error occurred while linking your Steam ID. Please try again later.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    "An error occurred while linking your Steam ID. Please try again later.",
+                    ephemeral=True
+                )
+
+    # ==========================================
+    # ADMIN: UNLOCK ID
+    # ==========================================
+
+    @app_commands.command(
+        name="unlinkid",
+        description="[Admin] Unlock a user's linked ID so they can re-link"
+    )
+    @app_commands.guild_only()
+    @app_commands.describe(
+        user="The user whose ID to unlock",
+        id_type="Which ID type to unlock"
+    )
+    @app_commands.choices(id_type=[
+        app_commands.Choice(name="Steam ID", value="steam"),
+        app_commands.Choice(name="Alderon ID", value="alderon"),
+        app_commands.Choice(name="Both", value="both"),
+    ])
+    async def unlink_id(self, interaction: discord.Interaction,
+                        user: discord.Member, id_type: str):
+        """Admin command to unlock a user's linked ID."""
+
+        # Check permission
+        if not await require_permission(interaction, 'unlinkid'):
+            return
+
+        try:
+            # Get current player data
+            player = PlayerQueries.get_by_user(interaction.guild_id, user.id)
+
+            if not player:
+                await interaction.response.send_message(
+                    f"{user.mention} doesn't have any linked IDs.",
+                    ephemeral=True
+                )
+                return
+
+            cleared = []
+
+            if id_type in ('alderon', 'both'):
+                if player.get('player_id'):
+                    PlayerQueries.clear_alderon(interaction.guild_id, user.id)
+                    cleared.append(f"Alderon ID: `{player['player_id']}`")
+
+            if id_type in ('steam', 'both'):
+                if player.get('steam_id'):
+                    PlayerQueries.clear_steam(interaction.guild_id, user.id)
+                    cleared.append(f"Steam ID: `{player['steam_id']}`")
+
+            if not cleared:
+                await interaction.response.send_message(
+                    f"{user.mention} doesn't have a {id_type} ID linked.",
+                    ephemeral=True
+                )
+                return
+
+            # Log to audit
+            AuditQueries.log(
+                guild_id=interaction.guild_id,
+                action_type=AuditQueries.ACTION_PLAYER_UNLINKED,
+                performed_by_id=interaction.user.id,
+                performed_by_name=str(interaction.user),
+                target_user_id=user.id,
+                details={'cleared': cleared, 'type': id_type}
+            )
+
+            embed = discord.Embed(
+                title="ID Unlocked",
+                description=f"The following ID(s) have been cleared for {user.mention}:",
+                color=discord.Color.orange()
+            )
+            embed.add_field(name="Cleared", value="\n".join(cleared), inline=False)
+            embed.set_footer(text=f"Unlocked by {interaction.user}")
+
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        except Exception as e:
+            logger.error(f"Error in /unlinkid: {e}", exc_info=True)
+            await interaction.response.send_message(
+                "An error occurred while unlinking the ID.",
+                ephemeral=True
+            )
+
+    # ==========================================
+    # LOOKUP COMMANDS
+    # ==========================================
+
+    @app_commands.command(
+        name="playerid",
+        description="Look up a player by Discord, Steam, or Alderon ID"
+    )
+    @app_commands.guild_only()
+    @app_commands.describe(
+        query="Discord username, Steam ID (17 digits), or Alderon ID (XXX-XXX-XXX)"
     )
     async def lookup_player(self, interaction: discord.Interaction, query: str):
-        """Look up player info by Discord name or Alderon ID."""
+        """Look up player info by any ID type."""
 
         try:
             # Ensure guild exists
@@ -137,12 +372,17 @@ class PlayerLinking(commands.Cog):
                 )
                 return
 
-            # Determine if query is an Alderon ID or username
-            is_alderon_id = re.match(r"^\d{3}-\d{3}-\d{3}$", query)
+            player = None
 
-            if is_alderon_id:
+            # Determine query type and search
+            if re.match(r"^\d{3}-\d{3}-\d{3}$", query):
+                # Alderon ID format
                 player = PlayerQueries.get_by_player_id(interaction.guild_id, query)
+            elif re.match(r"^\d{17}$", query):
+                # Steam ID format (17 digits)
+                player = PlayerQueries.get_by_steam_id(interaction.guild_id, query)
             else:
+                # Try username
                 player = PlayerQueries.get_by_username(interaction.guild_id, query)
 
             if not player:
@@ -151,13 +391,20 @@ class PlayerLinking(commands.Cog):
                 if results:
                     embed = discord.Embed(
                         title="Search Results",
-                        description=f"Found {len(results)} partial match(es):",
+                        description=f"Found {len(results)} match(es):",
                         color=discord.Color.blue()
                     )
                     for p in results[:5]:  # Show max 5
+                        value_parts = [f"Discord: {p['username']}"]
+                        if p.get('player_id'):
+                            value_parts.append(f"Alderon: `{p['player_id']}`")
+                        if p.get('steam_id'):
+                            value_parts.append(f"Steam: `{p['steam_id']}`")
+
+                        name = p.get('player_name') or p.get('steam_name') or p['username']
                         embed.add_field(
-                            name=p['player_name'],
-                            value=f"ID: `{p['player_id']}`\nDiscord: {p['username']}",
+                            name=name,
+                            value="\n".join(value_parts),
                             inline=True
                         )
                     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -168,14 +415,41 @@ class PlayerLinking(commands.Cog):
                     )
                 return
 
-            # Found exact match
+            # Found exact match - build comprehensive embed
             embed = discord.Embed(
                 title="Player Information",
                 color=discord.Color.blue()
             )
-            embed.add_field(name="Player Name", value=player['player_name'], inline=True)
-            embed.add_field(name="Alderon ID", value=f"`{player['player_id']}`", inline=True)
-            embed.add_field(name="Discord", value=player['username'], inline=True)
+
+            # Discord info
+            embed.add_field(
+                name="Discord",
+                value=f"{player['username']}",
+                inline=False
+            )
+
+            # Alderon info
+            if player.get('player_id'):
+                embed.add_field(
+                    name="Alderon",
+                    value=f"**Name:** {player['player_name']}\n**ID:** `{player['player_id']}`",
+                    inline=True
+                )
+
+            # Steam info
+            if player.get('steam_id'):
+                embed.add_field(
+                    name="Steam",
+                    value=f"**Name:** {player.get('steam_name', 'Unknown')}\n**ID:** `{player['steam_id']}`",
+                    inline=True
+                )
+
+            if not player.get('player_id') and not player.get('steam_id'):
+                embed.add_field(
+                    name="Game IDs",
+                    value="No game IDs linked",
+                    inline=False
+                )
 
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -188,7 +462,7 @@ class PlayerLinking(commands.Cog):
 
     @app_commands.command(
         name="myid",
-        description="View your linked Alderon ID"
+        description="View your linked accounts"
     )
     @app_commands.guild_only()
     async def my_id(self, interaction: discord.Interaction):
@@ -199,21 +473,59 @@ class PlayerLinking(commands.Cog):
 
             player = PlayerQueries.get_by_user(interaction.guild_id, interaction.user.id)
 
-            if not player:
-                await interaction.response.send_message(
-                    "You haven't linked an Alderon ID yet.\n"
-                    "Use `/alderonid` to link your account.",
-                    ephemeral=True
-                )
-                return
-
             embed = discord.Embed(
-                title="Your Player Information",
+                title="Your Linked Accounts",
                 color=discord.Color.green()
             )
-            embed.add_field(name="Player Name", value=player['player_name'], inline=True)
-            embed.add_field(name="Alderon ID", value=f"`{player['player_id']}`", inline=True)
-            embed.set_footer(text="Use /alderonid to update your info")
+
+            # Discord - always show
+            # Get display name and username
+            display_name = interaction.user.display_name
+            username = interaction.user.name
+            embed.add_field(
+                name="Discord",
+                value=f"@{display_name} (.{username}.)",
+                inline=False
+            )
+
+            has_ids = False
+
+            # Steam info
+            if player and player.get('steam_id'):
+                has_ids = True
+                embed.add_field(
+                    name="Steam",
+                    value=f"**Steam Name:** {player.get('steam_name', 'Unknown')}\n"
+                          f"**Steam ID:** `{player['steam_id']}`",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="Steam",
+                    value="Not linked\nUse `/linksteam` to link",
+                    inline=False
+                )
+
+            # Alderon info
+            if player and player.get('player_id'):
+                has_ids = True
+                embed.add_field(
+                    name="Alderon",
+                    value=f"**Player Name:** {player['player_name']}\n"
+                          f"**Alderon ID:** `{player['player_id']}`",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="Alderon",
+                    value="Not linked\nUse `/alderonid` to link",
+                    inline=False
+                )
+
+            if has_ids:
+                embed.set_footer(text="IDs are locked. Contact an admin to change them.")
+            else:
+                embed.set_footer(text="Link your game accounts to get started!")
 
             await interaction.response.send_message(embed=embed, ephemeral=True)
 

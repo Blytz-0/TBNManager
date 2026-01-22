@@ -5,7 +5,8 @@
       "Bash(python:*)",
       "Bash(git add:*)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nRename commands for better clarity\n\n- /strikes → /strikelist\n- /bans → /banlist  \n- /tickets → /ticketlist\n- /claim → /claimticket\n- /close → /closeticket\n- /adduser → /ticketadd\n- /removeuser → /ticketremove\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd Steam ID linking to player passport system\n\nNew features:\n- /linksteam - Link Discord account to Steam ID \\(validated via Steam API\\)\n- /unlinkid - Admin command to unlock user''s linked ID for re-linking\n- /myid now shows Discord, Steam, and Alderon accounts\n- /playerid searches across all ID types \\(Discord, Steam, Alderon\\)\n\nSecurity:\n- IDs are locked once linked \\(prevents ban evasion\\)\n- Users must request admin unlock to change their linked ID\n- Steam IDs validated via Steam Web API before linking\n\nFiles added:\n- migrations/006_steam_linking.sql - Database schema updates\n- services/steam_api.py - Steam Web API integration\n\nFuture-proofing:\n- verified_at and verification_method columns for RCON verification\n- required_ids guild setting for server-configurable ID requirements\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
     ]
   }
 }
