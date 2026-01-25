@@ -459,19 +459,32 @@ class ConfigCommands(commands.Cog):
             color=discord.Color.green()
         )
 
+        # Categories with dedicated help commands
+        dedicated_help_categories = {'RCON', 'Server', 'Logs'}
+
         # Build help by category
         for category, commands in COMMAND_CATEGORIES.items():
             visible = [cmd for cmd in commands if cmd in allowed]
             if visible:
-                cmd_lines = []
-                for cmd in visible:
-                    desc = COMMAND_DESCRIPTIONS.get(cmd, '')
-                    cmd_lines.append(f"`/{cmd}` - {desc}")
-                embed.add_field(
-                    name=category,
-                    value="\n".join(cmd_lines),
-                    inline=False
-                )
+                # For large premium categories, show a pointer to dedicated help
+                if category in dedicated_help_categories:
+                    group_name = category.lower()
+                    embed.add_field(
+                        name=category,
+                        value=f"Use `/{group_name} help` to view all {category} commands ({len(visible)} available)",
+                        inline=False
+                    )
+                else:
+                    # Show full command list for regular categories
+                    cmd_lines = []
+                    for cmd in visible:
+                        desc = COMMAND_DESCRIPTIONS.get(cmd, '')
+                        cmd_lines.append(f"`/{cmd}` - {desc}")
+                    embed.add_field(
+                        name=category,
+                        value="\n".join(cmd_lines),
+                        inline=False
+                    )
 
         if not any(embed.fields):
             embed.description = (

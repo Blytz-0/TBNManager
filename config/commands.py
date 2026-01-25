@@ -25,11 +25,11 @@ COMMAND_CATEGORIES = {
     'Config': ['setup', 'setchannel', 'feature', 'roleperms', 'help'],
     # Premium: RCON Integration
     'RCON': [
-        'rcon_addserver', 'rcon_servers', 'rcon_removeserver', 'rcon_test',
-        'rcon_kick', 'rcon_ban', 'rcon_announce', 'rcon_dm', 'rcon_players', 'rcon_save',
+        'rcon_help', 'rcon_addserver', 'rcon_servers', 'rcon_removeserver', 'rcon_test',
+        'rcon_kick', 'rcon_ban', 'rcon_announce', 'rcon_dm', 'rcon_players', 'rcon_save', 'rcon_console',
         'rcon_wipecorpses', 'rcon_allowdinos', 'rcon_whitelist', 'rcon_whitelistadd',
         'rcon_whitelistremove', 'rcon_globalchat', 'rcon_togglehumans', 'rcon_toggleai',
-        'rcon_disableai', 'rcon_aidensity'
+        'rcon_disableai', 'rcon_aidensity', 'rcon_startverify', 'rcon_verify'
     ],
     # Premium: Pterodactyl Control
     'Server': [
@@ -59,11 +59,11 @@ FEATURE_COMMANDS = {
     'role_selection': ['rolepanel'],
     # Premium features
     'rcon': [
-        'rcon_addserver', 'rcon_servers', 'rcon_removeserver', 'rcon_test',
-        'rcon_kick', 'rcon_ban', 'rcon_announce', 'rcon_dm', 'rcon_players', 'rcon_save',
+        'rcon_help', 'rcon_addserver', 'rcon_servers', 'rcon_removeserver', 'rcon_test',
+        'rcon_kick', 'rcon_ban', 'rcon_announce', 'rcon_dm', 'rcon_players', 'rcon_save', 'rcon_console',
         'rcon_wipecorpses', 'rcon_allowdinos', 'rcon_whitelist', 'rcon_whitelistadd',
         'rcon_whitelistremove', 'rcon_globalchat', 'rcon_togglehumans', 'rcon_toggleai',
-        'rcon_disableai', 'rcon_aidensity'
+        'rcon_disableai', 'rcon_aidensity', 'rcon_startverify', 'rcon_verify'
     ],
     'pterodactyl': [
         'server_setup', 'server_connections', 'server_list', 'server_info',
@@ -151,6 +151,7 @@ COMMAND_DESCRIPTIONS = {
     'help': 'List available commands',
 
     # RCON (Premium)
+    'rcon_help': '[Premium] Show all RCON commands',
     'rcon_addserver': '[Premium] Add RCON server configuration',
     'rcon_servers': '[Premium] List configured RCON servers',
     'rcon_removeserver': '[Premium] Remove RCON server',
@@ -161,6 +162,7 @@ COMMAND_DESCRIPTIONS = {
     'rcon_dm': '[Premium] DM player in-game',
     'rcon_players': '[Premium] List online players with dino info',
     'rcon_save': '[Premium] Save game server state',
+    'rcon_console': '[Premium] Send raw RCON command (PoT)',
     'rcon_wipecorpses': '[Premium] Wipe all corpses from server',
     'rcon_allowdinos': '[Premium] Update allowed playable dinosaurs',
     'rcon_whitelist': '[Premium] Toggle server whitelist',
@@ -171,6 +173,8 @@ COMMAND_DESCRIPTIONS = {
     'rcon_toggleai': '[Premium] Toggle AI spawns',
     'rcon_disableai': '[Premium] Disable specific AI classes',
     'rcon_aidensity': '[Premium] Set AI spawn density',
+    'rcon_startverify': '[Premium] Start RCON verification',
+    'rcon_verify': '[Premium] Complete RCON verification',
 
     # Server Control (Premium)
     'server_setup': '[Premium] Configure Pterodactyl connection',

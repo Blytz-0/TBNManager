@@ -1352,6 +1352,90 @@ class RCONCommands(commands.GroupCog, name="rcon"):
             await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
 
     # ==========================================
+    # HELP
+    # ==========================================
+
+    @app_commands.command(name="help", description="Show all available RCON commands")
+    @app_commands.guild_only()
+    async def rcon_help(self, interaction: discord.Interaction):
+        """Display detailed RCON command help."""
+        from config.commands import COMMAND_DESCRIPTIONS
+        from services.permissions import get_user_allowed_commands
+
+        # Get commands this user can access
+        allowed = get_user_allowed_commands(interaction.guild_id, interaction.user)
+
+        # Filter RCON commands
+        rcon_commands = [
+            'rcon_addserver', 'rcon_servers', 'rcon_removeserver', 'rcon_test',
+            'rcon_kick', 'rcon_ban', 'rcon_announce', 'rcon_dm', 'rcon_players',
+            'rcon_save', 'rcon_console', 'rcon_wipecorpses', 'rcon_allowdinos',
+            'rcon_whitelist', 'rcon_whitelistadd', 'rcon_whitelistremove',
+            'rcon_globalchat', 'rcon_togglehumans', 'rcon_toggleai',
+            'rcon_disableai', 'rcon_aidensity', 'rcon_startverify', 'rcon_verify'
+        ]
+
+        visible = [cmd for cmd in rcon_commands if cmd in allowed]
+
+        if not visible:
+            await interaction.response.send_message(
+                "You don't have access to any RCON commands.\n\n"
+                "Contact a server administrator to request permissions.",
+                ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title="RCON Commands (Premium)",
+            description="Remote console commands for game server management",
+            color=discord.Color.blue()
+        )
+
+        # Group commands by category
+        categories = {
+            "Server Management": [
+                'rcon_addserver', 'rcon_servers', 'rcon_removeserver', 'rcon_test'
+            ],
+            "Player Management": [
+                'rcon_kick', 'rcon_ban', 'rcon_announce', 'rcon_dm',
+                'rcon_players', 'rcon_console'
+            ],
+            "Server Control": [
+                'rcon_save', 'rcon_wipecorpses', 'rcon_allowdinos'
+            ],
+            "Whitelist": [
+                'rcon_whitelist', 'rcon_whitelistadd', 'rcon_whitelistremove'
+            ],
+            "Game Settings": [
+                'rcon_globalchat', 'rcon_togglehumans', 'rcon_toggleai',
+                'rcon_disableai', 'rcon_aidensity'
+            ],
+            "Verification": [
+                'rcon_startverify', 'rcon_verify'
+            ]
+        }
+
+        for category_name, category_commands in categories.items():
+            visible_in_category = [cmd for cmd in category_commands if cmd in visible]
+            if visible_in_category:
+                cmd_lines = []
+                for cmd in visible_in_category:
+                    # Remove 'rcon_' prefix for display
+                    display_name = cmd.replace('rcon_', '')
+                    desc = COMMAND_DESCRIPTIONS.get(cmd, '')
+                    cmd_lines.append(f"`/rcon {display_name}` - {desc}")
+
+                embed.add_field(
+                    name=category_name,
+                    value="\n".join(cmd_lines),
+                    inline=False
+                )
+
+        embed.set_footer(text=f"You have access to {len(visible)} RCON commands")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ==========================================
     # VERIFICATION
     # ==========================================
 
