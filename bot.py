@@ -45,6 +45,11 @@ COGS = [
     'cogs.admin.moderation',
     'cogs.admin.config',
     'cogs.admin.tickets',
+
+    # Premium: RCON & Server Control
+    'cogs.admin.rcon',
+    'cogs.admin.servercontrol',
+    'cogs.admin.serverlogs',
 ]
 
 

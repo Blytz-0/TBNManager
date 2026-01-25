@@ -16,3 +16,15 @@ requests>=2.31.0
 
 # Type hints
 typing_extensions>=4.7.0
+
+# RCON Integration (Premium)
+gamercon-async>=1.0.0
+
+# Pterodactyl Integration (Premium)
+py-dactyl>=2.0.0
+
+# SFTP Log Monitoring (Premium)
+paramiko>=3.0.0
+
+# Encryption for credentials
+cryptography>=41.0.0

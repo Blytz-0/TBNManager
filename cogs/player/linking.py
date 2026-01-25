@@ -389,31 +389,59 @@ class PlayerLinking(commands.Cog):
                 # Try search if exact match not found
                 results = PlayerQueries.search(interaction.guild_id, query)
                 if results:
-                    embed = discord.Embed(
-                        title="Search Results",
-                        description=f"Found {len(results)} match(es):",
-                        color=discord.Color.blue()
-                    )
-                    for p in results[:5]:  # Show max 5
-                        value_parts = [f"Discord: {p['username']}"]
-                        if p.get('player_id'):
-                            value_parts.append(f"Alderon: `{p['player_id']}`")
-                        if p.get('steam_id'):
-                            value_parts.append(f"Steam: `{p['steam_id']}`")
-
-                        name = p.get('player_name') or p.get('steam_name') or p['username']
-                        embed.add_field(
-                            name=name,
-                            value="\n".join(value_parts),
-                            inline=True
+                    if len(results) == 1:
+                        # Single result - show full details like exact match
+                        player = results[0]
+                    else:
+                        # Multiple results - show selection list
+                        embed = discord.Embed(
+                            title="Multiple Players Found",
+                            description=f"Found {len(results)} matches for `{query}`.\nUse a specific ID for detailed info.",
+                            color=discord.Color.blue()
                         )
-                    await interaction.response.send_message(embed=embed, ephemeral=True)
+                        for p in results[:5]:  # Show max 5
+                            # Try to get Discord member
+                            member = interaction.guild.get_member(p['user_id'])
+                            display_name = member.display_name if member else p['username']
+
+                            value_parts = []
+
+                            # Discord info
+                            if member:
+                                value_parts.append(f"**Discord:** @{display_name} ({p['username']})")
+                            else:
+                                value_parts.append(f"**Discord:** {p['username']}")
+
+                            # Alderon info
+                            if p.get('player_id'):
+                                alderon_name = p.get('player_name', 'Unknown')
+                                value_parts.append(f"**Alderon:** {alderon_name} (`{p['player_id']}`)")
+
+                            # Steam info
+                            if p.get('steam_id'):
+                                steam_name = p.get('steam_name', 'Unknown')
+                                value_parts.append(f"**Steam:** {steam_name} (`{p['steam_id']}`)")
+
+                            if not p.get('player_id') and not p.get('steam_id'):
+                                value_parts.append("*No game IDs linked*")
+
+                            # Use player_name, steam_name, or username as field title
+                            field_name = p.get('player_name') or p.get('steam_name') or display_name
+                            embed.add_field(
+                                name=field_name,
+                                value="\n".join(value_parts),
+                                inline=False
+                            )
+
+                        embed.set_footer(text="Tip: Search by exact Steam ID (17 digits) or Alderon ID (XXX-XXX-XXX) for full details")
+                        await interaction.response.send_message(embed=embed, ephemeral=True)
+                        return
                 else:
                     await interaction.response.send_message(
                         f"No player found matching `{query}`.",
                         ephemeral=True
                     )
-                return
+                    return
 
             # Found exact match - build comprehensive embed
             embed = discord.Embed(
@@ -421,29 +449,27 @@ class PlayerLinking(commands.Cog):
                 color=discord.Color.blue()
             )
 
-            # Try to get Discord member for avatar
+            # Try to get Discord member for avatar and display name
             member = interaction.guild.get_member(player['user_id'])
             if member:
                 embed.set_thumbnail(url=member.display_avatar.url)
+                discord_value = f"@{member.display_name} ({player['username']})"
+            else:
+                discord_value = f"{player['username']} *(not in server)*"
 
             # Discord info
             embed.add_field(
                 name="Discord",
-                value=f"{player['username']}",
+                value=discord_value,
                 inline=False
             )
 
-            # Alderon info
-            if player.get('player_id'):
-                embed.add_field(
-                    name="Alderon",
-                    value=f"**Name:** {player['player_name']}\n**ID:** `{player['player_id']}`",
-                    inline=True
-                )
+            has_ids = False
+            steam_avatar_url = None
 
             # Steam info
-            steam_avatar_url = None
             if player.get('steam_id'):
+                has_ids = True
                 # Try to get Steam avatar
                 if SteamAPI.is_configured():
                     try:
@@ -453,14 +479,25 @@ class PlayerLinking(commands.Cog):
                     except Exception:
                         pass
 
-                steam_value = f"**Name:** {player.get('steam_name', 'Unknown')}\n**ID:** `{player['steam_id']}`"
+                steam_value = f"**Steam Name:** {player.get('steam_name', 'Unknown')}\n**Steam ID:** `{player['steam_id']}`"
+                if steam_avatar_url:
+                    steam_value += f"\n[View Profile](https://steamcommunity.com/profiles/{player['steam_id']})"
                 embed.add_field(
                     name="Steam",
                     value=steam_value,
-                    inline=True
+                    inline=False
                 )
 
-            if not player.get('player_id') and not player.get('steam_id'):
+            # Alderon info
+            if player.get('player_id'):
+                has_ids = True
+                embed.add_field(
+                    name="Alderon",
+                    value=f"**Player Name:** {player['player_name']}\n**Alderon ID:** `{player['player_id']}`",
+                    inline=False
+                )
+
+            if not has_ids:
                 embed.add_field(
                     name="Game IDs",
                     value="No game IDs linked",
@@ -470,6 +507,10 @@ class PlayerLinking(commands.Cog):
             # Show Steam avatar at bottom if available
             if steam_avatar_url:
                 embed.set_image(url=steam_avatar_url)
+
+            # Footer with ID lock info
+            if has_ids:
+                embed.set_footer(text="IDs are locked. Use /unlinkid to allow changes.")
 
             await interaction.response.send_message(embed=embed, ephemeral=True)
 

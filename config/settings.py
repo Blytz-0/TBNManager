@@ -57,6 +57,9 @@ PREMIUM_FEATURES = [
     'advanced_analytics',
     'custom_branding',
     'api_access',
+    'rcon',           # RCON server management (kick, ban, announce)
+    'pterodactyl',    # Pterodactyl panel control (power, files)
+    'log_monitoring', # SFTP log monitoring (chat, kills, admin feeds)
 ]
 
 # ===========================================
@@ -64,6 +67,13 @@ PREMIUM_FEATURES = [
 # ===========================================
 # Get your API key from: https://steamcommunity.com/dev/apikey
 STEAM_API_KEY = config('STEAM_API_KEY', default=None)
+
+# ===========================================
+# ENCRYPTION CONFIGURATION
+# ===========================================
+# Master key for encrypting sensitive data (RCON passwords, API keys)
+# Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+ENCRYPTION_MASTER_KEY = config('ENCRYPTION_MASTER_KEY', default=None)
 
 # ===========================================
 # LOGGING CONFIGURATION
