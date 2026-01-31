@@ -402,7 +402,7 @@ class SetChannelsView(discord.ui.View):
             )
 
 
-class ServerLogsCommands(commands.GroupCog, name="logs"):
+class ServerLogsCommands(commands.GroupCog, name="sftplogs"):
     """Server log monitoring commands."""
 
     def __init__(self, bot: commands.Bot):
@@ -1631,6 +1631,80 @@ class ServerLogsCommands(commands.GroupCog, name="logs"):
                 f"An error occurred: {e}",
                 ephemeral=True
             )
+
+    @app_commands.command(name="help", description="Show all available SFTP log monitoring commands")
+    @app_commands.guild_only()
+    async def sftplogs_help(self, interaction: discord.Interaction):
+        """Display detailed SFTP log monitoring command help."""
+        from config.commands import COMMAND_DESCRIPTIONS
+        from services.permissions import get_user_allowed_commands
+
+        # Get commands this user can access
+        allowed = get_user_allowed_commands(interaction.guild_id, interaction.user)
+
+        # Filter SFTP log commands
+        sftplogs_commands = [
+            'logs_setup', 'logs_setpath', 'logs_setchannel', 'logs_start',
+            'logs_stop', 'logs_status', 'logs_fileinfo', 'logs_test',
+            'logs_readfile', 'logs_browse'
+        ]
+
+        visible = [cmd for cmd in sftplogs_commands if cmd in allowed]
+
+        if not visible:
+            await interaction.response.send_message(
+                "You don't have access to any SFTP log monitoring commands.\n\n"
+                "Contact a server administrator to request permissions.",
+                ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title="SFTP Log Monitoring Commands (Premium)",
+            description="Real-time game server log monitoring via SFTP",
+            color=discord.Color.blue()
+        )
+
+        # Group commands by category
+        categories = {
+            "Setup & Configuration": [
+                'logs_setup', 'logs_setpath', 'logs_setchannel'
+            ],
+            "Monitoring Control": [
+                'logs_start', 'logs_stop', 'logs_status'
+            ],
+            "Debug & Testing": [
+                'logs_fileinfo', 'logs_test', 'logs_readfile', 'logs_browse'
+            ]
+        }
+
+        for category_name, category_commands in categories.items():
+            visible_in_category = [cmd for cmd in category_commands if cmd in visible]
+            if visible_in_category:
+                cmd_lines = []
+                for cmd in visible_in_category:
+                    # Remove 'logs_' prefix for display
+                    display_name = cmd.replace('logs_', '')
+                    desc = COMMAND_DESCRIPTIONS.get(cmd, '')
+                    cmd_lines.append(f"`/sftplogs {display_name}` - {desc}")
+
+                embed.add_field(
+                    name=category_name,
+                    value="\n".join(cmd_lines),
+                    inline=False
+                )
+
+        embed.add_field(
+            name="Log Types",
+            value="• **Chat** - Player chat messages\n"
+                  "• **Kills** - Death/kill feed\n"
+                  "• **Admin** - Admin actions and RCON commands",
+            inline=False
+        )
+
+        embed.set_footer(text=f"You have access to {len(visible)} log monitoring commands")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ==========================================
     # AUTOCOMPLETE

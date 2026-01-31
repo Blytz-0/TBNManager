@@ -12,7 +12,7 @@ which is used for:
 # All commands organized by category
 # Order matters - this determines the order in INI config and /help
 COMMAND_CATEGORIES = {
-    'Player': ['alderonid', 'linksteam', 'playerid', 'myid', 'unlinkid'],
+    'Player': ['alderonid', 'linksteam', 'verifymyid', 'playerid', 'myid', 'unlinkid'],
     'Strikes': [
         'addstrike', 'strikelist', 'strikehistory', 'removestrike',
         'clearstrikes', 'ban', 'unban', 'banlist', 'wipehistory', 'recentstrikes'
@@ -33,13 +33,14 @@ COMMAND_CATEGORIES = {
     ],
     # Premium: Pterodactyl Control
     'Server': [
-        'server_setup', 'server_connections', 'server_list', 'server_info',
+        'server_help', 'server_setup', 'server_connections', 'server_list', 'server_info',
         'server_start', 'server_stop', 'server_restart', 'server_kill',
         'server_files', 'server_readfile', 'server_editfile', 'server_download', 'server_console'
     ],
-    # Premium: Log Monitoring
-    'Logs': [
-        'logs_setup', 'logs_setpath', 'logs_setchannel', 'logs_start', 'logs_stop', 'logs_status'
+    # Premium: SFTP Log Monitoring
+    'SFTP Logs': [
+        'logs_help', 'logs_setup', 'logs_setpath', 'logs_setchannel', 'logs_start', 'logs_stop',
+        'logs_status', 'logs_fileinfo', 'logs_test', 'logs_readfile', 'logs_browse'
     ],
 }
 
@@ -55,7 +56,7 @@ FEATURE_COMMANDS = {
         'ticketlist', 'closeticket', 'claimticket', 'ticketadd', 'ticketremove'
     ],
     'announcements': ['announce'],
-    'player_linking': ['alderonid', 'linksteam', 'playerid', 'myid', 'unlinkid'],
+    'player_linking': ['alderonid', 'linksteam', 'verifymyid', 'playerid', 'myid', 'unlinkid'],
     'role_selection': ['rolepanel'],
     # Premium features
     'rcon': [
@@ -66,12 +67,13 @@ FEATURE_COMMANDS = {
         'rcon_disableai', 'rcon_aidensity', 'rcon_startverify', 'rcon_verify'
     ],
     'pterodactyl': [
-        'server_setup', 'server_connections', 'server_list', 'server_info',
+        'server_help', 'server_setup', 'server_connections', 'server_list', 'server_info',
         'server_start', 'server_stop', 'server_restart', 'server_kill',
         'server_files', 'server_readfile', 'server_editfile', 'server_download', 'server_console'
     ],
     'log_monitoring': [
-        'logs_setup', 'logs_setpath', 'logs_setchannel', 'logs_start', 'logs_stop', 'logs_status'
+        'logs_help', 'logs_setup', 'logs_setpath', 'logs_setchannel', 'logs_start', 'logs_stop',
+        'logs_status', 'logs_fileinfo', 'logs_test', 'logs_readfile', 'logs_browse'
     ],
 }
 
@@ -108,6 +110,7 @@ COMMAND_DESCRIPTIONS = {
     # Player
     'alderonid': 'Link your Discord to your Alderon ID',
     'linksteam': 'Link your Discord to your Steam ID',
+    'verifymyid': '[Premium] Verify by typing a code in-game chat',
     'playerid': 'Look up player by Discord, Steam, or Alderon ID',
     'myid': 'View your linked accounts',
     'unlinkid': '[Admin] Unlock a user\'s linked ID',
@@ -177,6 +180,7 @@ COMMAND_DESCRIPTIONS = {
     'rcon_verify': '[Premium] Complete RCON verification',
 
     # Server Control (Premium)
+    'server_help': '[Premium] Show all server commands',
     'server_setup': '[Premium] Configure Pterodactyl connection',
     'server_connections': '[Premium] List Pterodactyl connections',
     'server_list': '[Premium] List game servers',
@@ -191,13 +195,18 @@ COMMAND_DESCRIPTIONS = {
     'server_download': '[Premium] Download server file',
     'server_console': '[Premium] Send console command',
 
-    # Logs (Premium)
+    # SFTP Logs (Premium)
+    'logs_help': '[Premium] Show all log monitoring commands',
     'logs_setup': '[Premium] Configure SFTP for log monitoring',
     'logs_setpath': '[Premium] Set log file path',
     'logs_setchannel': '[Premium] Set log output channel',
     'logs_start': '[Premium] Start log monitoring',
     'logs_stop': '[Premium] Stop log monitoring',
     'logs_status': '[Premium] Show monitoring status',
+    'logs_fileinfo': '[Premium] Check log file details',
+    'logs_test': '[Premium] Test log file reading',
+    'logs_readfile': '[Premium] Read file contents',
+    'logs_browse': '[Premium] Browse SFTP directory',
 }
 
 

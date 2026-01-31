@@ -699,6 +699,88 @@ class ServerControlCommands(commands.GroupCog, name="server"):
                 ephemeral=True
             )
 
+    @app_commands.command(name="help", description="Show all available Pterodactyl server commands")
+    @app_commands.guild_only()
+    async def server_help(self, interaction: discord.Interaction):
+        """Display detailed Pterodactyl command help."""
+        from config.commands import COMMAND_DESCRIPTIONS
+        from services.permissions import get_user_allowed_commands
+
+        # Get commands this user can access
+        allowed = get_user_allowed_commands(interaction.guild_id, interaction.user)
+
+        # Filter server commands
+        server_commands = [
+            'server_setup', 'server_connections', 'server_list', 'server_info',
+            'server_start', 'server_stop', 'server_restart', 'server_kill',
+            'server_files', 'server_readfile', 'server_editfile', 'server_download',
+            'server_console'
+        ]
+
+        visible = [cmd for cmd in server_commands if cmd in allowed]
+
+        if not visible:
+            await interaction.response.send_message(
+                "You don't have access to any Pterodactyl server commands.\n\n"
+                "Contact a server administrator to request permissions.",
+                ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title="Pterodactyl Server Commands (Premium)",
+            description="Game server management via Pterodactyl panel",
+            color=discord.Color.blue()
+        )
+
+        # Group commands by category
+        categories = {
+            "Setup & Configuration": [
+                'server_setup', 'server_connections', 'server_list'
+            ],
+            "Server Information": [
+                'server_info'
+            ],
+            "Power Control": [
+                'server_start', 'server_stop', 'server_restart', 'server_kill'
+            ],
+            "File Operations": [
+                'server_files', 'server_readfile', 'server_editfile', 'server_download'
+            ],
+            "Console Access": [
+                'server_console'
+            ]
+        }
+
+        for category_name, category_commands in categories.items():
+            visible_in_category = [cmd for cmd in category_commands if cmd in visible]
+            if visible_in_category:
+                cmd_lines = []
+                for cmd in visible_in_category:
+                    # Remove 'server_' prefix for display
+                    display_name = cmd.replace('server_', '')
+                    desc = COMMAND_DESCRIPTIONS.get(cmd, '')
+                    cmd_lines.append(f"`/server {display_name}` - {desc}")
+
+                embed.add_field(
+                    name=category_name,
+                    value="\n".join(cmd_lines),
+                    inline=False
+                )
+
+        embed.add_field(
+            name="Features",
+            value="• Power management (start/stop/restart/kill)\n"
+                  "• Resource monitoring (CPU, RAM, disk)\n"
+                  "• File browsing and editing\n"
+                  "• Console command execution",
+            inline=False
+        )
+
+        embed.set_footer(text=f"You have access to {len(visible)} server commands")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     # ==========================================
     # AUTOCOMPLETE
     # ==========================================

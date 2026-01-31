@@ -462,7 +462,14 @@ class ConfigCommands(commands.Cog):
         )
 
         # Categories with dedicated help commands
-        dedicated_help_categories = {'RCON', 'Server', 'Logs'}
+        dedicated_help_categories = {'RCON', 'Server', 'SFTP Logs'}
+
+        # Mapping of category names to slash command groups
+        category_to_group = {
+            'RCON': 'rcon',
+            'Server': 'server',
+            'SFTP Logs': 'sftplogs'
+        }
 
         # Build help by category
         for category, commands in COMMAND_CATEGORIES.items():
@@ -470,7 +477,7 @@ class ConfigCommands(commands.Cog):
             if visible:
                 # For large premium categories, show a pointer to dedicated help
                 if category in dedicated_help_categories:
-                    group_name = category.lower()
+                    group_name = category_to_group.get(category, category.lower())
                     embed.add_field(
                         name=category,
                         value=f"Use `/{group_name} help` to view all {category} commands ({len(visible)} available)",
