@@ -247,9 +247,10 @@ class PterodactylClient:
                 server_id
             )
             logger.debug(f"get_server_info response: {response}")
-            attrs = response.get('attributes', {})
-            if not attrs:
-                logger.warning(f"get_server_info returned empty attributes for server {server_id}")
+
+            # Client API returns data directly, Application API wraps in 'attributes'
+            attrs = response.get('attributes', response)
+
             return ServerInfo(
                 server_id=attrs.get('identifier', server_id),
                 name=attrs.get('name', 'Unknown'),
@@ -258,7 +259,7 @@ class PterodactylClient:
                 status=self._parse_status(attrs),
                 is_suspended=attrs.get('is_suspended', False),
                 node=attrs.get('node', 'Unknown'),
-                allocation=attrs.get('allocation', {})
+                allocation=attrs.get('relationships', {}).get('allocations', {}).get('data', [{}])[0].get('attributes', {}) if 'relationships' in attrs else attrs.get('allocation', {})
             )
         except Exception as e:
             logger.error(f"Failed to get server info: {e}", exc_info=True)
@@ -273,17 +274,25 @@ class PterodactylClient:
                 server_id
             )
             logger.debug(f"get_server_utilization response: {response}")
-            attrs = response.get('attributes', {})
-            if not attrs:
-                logger.warning(f"get_server_utilization returned empty attributes for server {server_id}")
-                logger.warning(f"Full response: {response}")
+
+            # Client API returns data directly, Application API wraps in 'attributes'
+            attrs = response.get('attributes', response)
             resources = attrs.get('resources', {})
+
+            # Get server info for limits (Client API resources endpoint doesn't include limits)
+            server_info_response = await asyncio.to_thread(
+                client.client.servers.get_server,
+                server_id
+            )
+            server_attrs = server_info_response.get('attributes', server_info_response)
+            limits = server_attrs.get('limits', {})
+
             return ServerResources(
                 cpu_percent=resources.get('cpu_absolute', 0),
                 memory_bytes=resources.get('memory_bytes', 0),
-                memory_limit_bytes=attrs.get('limits', {}).get('memory', 0) * 1024 * 1024,
+                memory_limit_bytes=limits.get('memory', 0) * 1024 * 1024,
                 disk_bytes=resources.get('disk_bytes', 0),
-                disk_limit_bytes=attrs.get('limits', {}).get('disk', 0) * 1024 * 1024,
+                disk_limit_bytes=limits.get('disk', 0) * 1024 * 1024,
                 network_rx_bytes=resources.get('network_rx_bytes', 0),
                 network_tx_bytes=resources.get('network_tx_bytes', 0),
                 uptime_seconds=resources.get('uptime', 0)
