@@ -15,7 +15,7 @@ from discord.ext import commands, tasks
 from database.queries import (
     GuildQueries, SFTPConfigQueries, LogChannelQueries,
     LogMonitorStateQueries, GuildRCONSettingsQueries, VerificationCodeQueries,
-    PlayerQueries, AuditQueries
+    PlayerQueries, AuditQueries, RCONCommandLogQueries
 )
 from services.permissions import require_permission
 from services.sftp_logs import (
@@ -2022,9 +2022,37 @@ class ServerLogsCommands(commands.GroupCog, name="sftplogs"):
                 embed = await build_admin_command_embed(entry, server_name, guild)
 
             elif isinstance(entry, RCONCommandEvent):
+                # Enrich RCON command with executor information from database
+                if not entry.executor_id:
+                    try:
+                        # Try to find the most recent RCON command log entry matching this command
+                        rcon_logs = RCONCommandLogQueries.get_recent_commands(guild_id, limit=100)
+                        if rcon_logs:
+                            # Match by command type and details
+                            for log_entry in rcon_logs:
+                                # Check if this log entry matches (same command type/details)
+                                command_type = log_entry.get('command_type', '').lower()
+                                entry_command_lower = entry.command.lower()
+
+                                # Try to match the command
+                                if (command_type in entry_command_lower or
+                                    entry_command_lower in command_type or
+                                    (entry.details and entry.details in str(log_entry.get('command_data', '')))):
+                                    entry.executor_id = log_entry.get('executed_by_id')
+                                    # Get username from guild member
+                                    if guild and entry.executor_id:
+                                        member = guild.get_member(entry.executor_id)
+                                        if member:
+                                            entry.executor_name = str(member)
+                                        else:
+                                            entry.executor_name = f"User {entry.executor_id}"
+                                    break
+                    except Exception as e:
+                        logger.error(f"Error enriching RCON command with executor: {e}")
+
                 # RCON commands default to admin channel if rcon channel not set (due to UI row limit)
                 channel_id = channels.get('rcon_command_channel_id') or channels.get('admin_command_channel_id')
-                embed = await build_rcon_command_embed(entry, server_name)
+                embed = await build_rcon_command_embed(entry, server_name, guild)
 
             elif isinstance(entry, PlayerDeathEvent):
                 channel_id = channels.get('player_death_channel_id')

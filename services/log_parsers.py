@@ -79,6 +79,8 @@ class RCONCommandEvent:
     timestamp: str
     command: str
     details: str
+    executor_id: Optional[int] = None  # Discord user ID who executed the command
+    executor_name: Optional[str] = None  # Discord username who executed the command
     raw_line: str = ""
 
 

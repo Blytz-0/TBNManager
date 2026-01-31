@@ -452,7 +452,8 @@ async def build_admin_command_embed(
 
 async def build_rcon_command_embed(
     event: RCONCommandEvent,
-    server_name: str
+    server_name: str,
+    guild: Optional[discord.Guild] = None
 ) -> discord.Embed:
     """
     Build embed for RCON command event.
@@ -461,6 +462,7 @@ async def build_rcon_command_embed(
         🤖 [Server Name] - RCON Command
         Command: [CommandType]
         Details: Command details/arguments
+        Executed By: Username (Role)
         Timestamp: 2026.01.31-04.47.53
     """
     # Parse timestamp (remove milliseconds)
@@ -486,6 +488,29 @@ async def build_rcon_command_embed(
         embed.add_field(
             name="Details",
             value=details_text,
+            inline=False
+        )
+
+    # Add executor information if available
+    if event.executor_id and event.executor_name:
+        executor_display = event.executor_name
+
+        # Try to get the user's role from Discord
+        if guild and event.executor_id:
+            try:
+                member = guild.get_member(event.executor_id)
+                if member:
+                    # Get the highest role (excluding @everyone)
+                    roles = [r for r in member.roles if r.name != "@everyone"]
+                    if roles:
+                        highest_role = max(roles, key=lambda r: r.position)
+                        executor_display = f"{event.executor_name} ({highest_role.name})"
+            except Exception:
+                pass  # If we can't fetch the member, just use the name
+
+        embed.add_field(
+            name="Executed By",
+            value=executor_display,
             inline=False
         )
 
