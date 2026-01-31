@@ -11,7 +11,7 @@ from discord.ext import commands
 from database.queries import GuildQueries, AuditQueries, PermissionQueries
 from services.permissions import require_admin, require_owner, require_permission, get_user_allowed_commands
 from services.ini_parser import parse_permissions_ini, generate_permissions_ini, validate_permissions, get_permissions_diff, INIParseError
-from config.settings import DEFAULT_FEATURES, PREMIUM_FEATURES
+from config.settings import DEFAULT_FEATURES, PREMIUM_FEATURES, FEATURE_DESCRIPTIONS
 from config.commands import COMMAND_CATEGORIES, COMMAND_DESCRIPTIONS, FEATURE_COMMANDS, get_all_commands, get_command_count
 import logging
 
@@ -101,7 +101,8 @@ class ConfigCommands(commands.Cog):
             for feature in DEFAULT_FEATURES:
                 enabled = GuildQueries.is_feature_enabled(guild_id, feature)
                 status = "✅" if enabled else "❌"
-                feature_status.append(f"{status} {feature}")
+                display_name = FEATURE_DESCRIPTIONS.get(feature, feature)
+                feature_status.append(f"{status} {display_name}")
 
             embed.add_field(
                 name="Features",
@@ -117,7 +118,8 @@ class ConfigCommands(commands.Cog):
                     status = "✅" if enabled else "❌"
                 else:
                     status = "🔒"
-                premium_status.append(f"{status} {feature}")
+                display_name = FEATURE_DESCRIPTIONS.get(feature, feature)
+                premium_status.append(f"{status} {display_name}")
 
             embed.add_field(
                 name="Premium Features",

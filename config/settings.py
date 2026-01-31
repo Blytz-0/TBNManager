@@ -57,10 +57,31 @@ PREMIUM_FEATURES = [
     'advanced_analytics',
     'custom_branding',
     'api_access',
-    'rcon',           # RCON server management (kick, ban, announce)
-    'pterodactyl',    # Pterodactyl panel control (power, files)
-    'log_monitoring', # SFTP log monitoring (chat, kills, admin feeds)
+    'rcon',
+    'pterodactyl',
+    'log_monitoring',
 ]
+
+# Feature display names and descriptions
+FEATURE_DESCRIPTIONS = {
+    # Free Features
+    'strikes': 'Strike System',
+    'tickets': 'Support Tickets',
+    'player_linking': 'Player Linking (Steam/Alderon)',
+    'role_selection': 'Self-Service Role Selection',
+    'announcements': 'Server Announcements',
+    'audit_log': 'Audit Logging',
+    'auto_ban': 'Auto-Ban (3 strikes)',
+    'dm_notifications': 'DM Notifications',
+
+    # Premium Features
+    'advanced_analytics': 'Advanced Analytics',
+    'custom_branding': 'Custom Bot Branding',
+    'api_access': 'REST API Access',
+    'rcon': 'RCON Integration',
+    'pterodactyl': 'Pterodactyl Panel Control',
+    'log_monitoring': 'SFTP Log Monitoring',
+}
 
 # ===========================================
 # STEAM API CONFIGURATION
