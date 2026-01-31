@@ -26,56 +26,127 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
-class ServerControlCommands(commands.GroupCog, name="server"):
-    """Pterodactyl server control commands."""
+class PterodactylSetupModal(discord.ui.Modal, title="Configure Pterodactyl Connection"):
+    """Modal for Pterodactyl connection setup."""
+
+    connection_name = discord.ui.TextInput(
+        label="Connection Name",
+        placeholder="e.g., My Game Panel",
+        required=True,
+        max_length=100
+    )
+
+    panel_url = discord.ui.TextInput(
+        label="Panel URL",
+        placeholder="https://panel.example.com",
+        required=True,
+        max_length=255
+    )
+
+    api_key = discord.ui.TextInput(
+        label="Client API Key",
+        placeholder="Starts with ptlc_",
+        required=True,
+        max_length=100,
+        style=discord.TextStyle.paragraph
+    )
 
     def __init__(self, bot: commands.Bot):
-        self.bot = bot
         super().__init__()
+        self.bot = bot
 
-    # ==========================================
-    # CONNECTION SETUP
-    # ==========================================
-
-    @app_commands.command(name="setup", description="Configure Pterodactyl panel connection")
-    @app_commands.guild_only()
-    @app_commands.describe(
-        name="Friendly name for this connection",
-        panel_url="Pterodactyl panel URL (e.g., https://panel.example.com)",
-        api_key="Client API key (starts with ptlc_)"
-    )
-    async def setup_connection(
-        self,
-        interaction: discord.Interaction,
-        name: str,
-        panel_url: str,
-        api_key: str
-    ):
-        """Configure a new Pterodactyl panel connection."""
-        if not await require_permission(interaction, 'server_setup'):
-            return
-
+    async def on_submit(self, interaction: discord.Interaction):
+        """Handle form submission."""
         await interaction.response.defer(ephemeral=True)
 
-        GuildQueries.get_or_create(interaction.guild_id, interaction.guild.name)
-
         try:
+            GuildQueries.get_or_create(interaction.guild_id, interaction.guild.name)
+
+            # Normalize panel URL
+            panel_url = self.panel_url.value.strip()
+
+            # Remove trailing slashes
+            panel_url = panel_url.rstrip('/')
+
+            # Remove /api/client, /admin/api, /api, /admin if present
+            panel_url = panel_url.replace('/api/client', '').replace('/admin/api', '').replace('/api', '').replace('/admin', '')
+
+            # Ensure https:// prefix
+            if not panel_url.startswith(('http://', 'https://')):
+                panel_url = f'https://{panel_url}'
+
+            api_key = self.api_key.value.strip()
+
+            # Validate API key format
+            if api_key.startswith('ptla_'):
+                await interaction.followup.send(
+                    "❌ **Wrong API Key Type**\n\n"
+                    "You provided an **Application API key** (ptla_), but you need a **Client API key** (ptlc_).\n\n"
+                    "**How to get the correct key:**\n"
+                    "1. Go to your Pterodactyl panel\n"
+                    "2. Click your username (top right) → Account Settings\n"
+                    "3. Go to **API Credentials** tab\n"
+                    "4. Click **Create Client API Key**\n"
+                    "5. Copy the key (starts with `ptlc_`)",
+                    ephemeral=True
+                )
+                return
+            elif not api_key.startswith('ptlc_'):
+                await interaction.followup.send(
+                    "⚠️ **API Key Format**\n\n"
+                    "Client API keys should start with `ptlc_`. Are you sure this is the correct key?\n\n"
+                    "**Where to find it:**\n"
+                    "Account Settings → API Credentials → Create Client API Key",
+                    ephemeral=True
+                )
+                return
+
             # Test connection first
             client = PterodactylClient(panel_url, api_key)
             test_result = await client.test_connection()
 
             if not test_result.success:
-                await interaction.followup.send(
-                    f"Connection failed: {test_result.message}\n"
-                    "Please check your panel URL and API key.",
-                    ephemeral=True
-                )
+                error_msg = test_result.message
+
+                # Provide helpful error messages
+                if "403" in error_msg or "Forbidden" in error_msg:
+                    await interaction.followup.send(
+                        f"❌ **Authentication Failed**\n\n"
+                        f"The API key was rejected by the panel.\n\n"
+                        f"**Possible causes:**\n"
+                        f"• Wrong API key\n"
+                        f"• API key was deleted\n"
+                        f"• Using Application API key instead of Client API key\n\n"
+                        f"**Panel URL tried:** `{panel_url}`\n"
+                        f"**Error:** {error_msg}",
+                        ephemeral=True
+                    )
+                elif "404" in error_msg or "Not Found" in error_msg:
+                    await interaction.followup.send(
+                        f"❌ **Panel Not Found**\n\n"
+                        f"Could not find the Pterodactyl API at this URL.\n\n"
+                        f"**Panel URL tried:** `{panel_url}`\n\n"
+                        f"**Make sure:**\n"
+                        f"• The URL is correct (just the base domain)\n"
+                        f"• The panel is running and accessible\n"
+                        f"• You're using the correct protocol (https/http)\n\n"
+                        f"**Error:** {error_msg}",
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        f"❌ **Connection Failed**\n\n"
+                        f"{error_msg}\n\n"
+                        f"**Panel URL tried:** `{panel_url}`\n\n"
+                        f"Please check your panel URL and API key.",
+                        ephemeral=True
+                    )
                 return
 
             # Save connection
             connection_id = PterodactylQueries.add_connection(
                 guild_id=interaction.guild_id,
-                connection_name=name,
+                connection_name=self.connection_name.value,
                 panel_url=panel_url,
                 api_key=api_key
             )
@@ -94,27 +165,57 @@ class ServerControlCommands(commands.GroupCog, name="server"):
                 )
 
             embed = discord.Embed(
-                title="Pterodactyl Connection Added",
-                description=f"Connection `{name}` configured successfully.",
+                title="✅ Pterodactyl Connection Added",
+                description=f"Connection **{self.connection_name.value}** configured successfully!",
                 color=discord.Color.green()
             )
-            embed.add_field(name="Panel URL", value=panel_url, inline=False)
+            embed.add_field(name="Panel URL", value=f"`{panel_url}`", inline=False)
             embed.add_field(name="Servers Found", value=str(len(servers)), inline=True)
 
             if servers:
                 server_list = "\n".join([f"• {s.name}" for s in servers[:5]])
                 if len(servers) > 5:
                     server_list += f"\n... and {len(servers) - 5} more"
-                embed.add_field(name="Servers", value=server_list, inline=False)
+                embed.add_field(name="Discovered Servers", value=server_list, inline=False)
+            else:
+                embed.add_field(
+                    name="⚠️ No Servers",
+                    value="No servers found. This API key may not have access to any servers.",
+                    inline=False
+                )
+
+            embed.set_footer(text="Use /server list to see all servers")
 
             await interaction.followup.send(embed=embed, ephemeral=True)
 
         except Exception as e:
             logger.error(f"Error setting up Pterodactyl: {e}", exc_info=True)
             await interaction.followup.send(
-                f"An error occurred: {e}",
+                f"❌ **Error**\n\nAn unexpected error occurred: {str(e)}",
                 ephemeral=True
             )
+
+
+class ServerControlCommands(commands.GroupCog, name="server"):
+    """Pterodactyl server control commands."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        super().__init__()
+
+    # ==========================================
+    # CONNECTION SETUP
+    # ==========================================
+
+    @app_commands.command(name="setup", description="Configure Pterodactyl panel connection")
+    @app_commands.guild_only()
+    async def setup_connection(self, interaction: discord.Interaction):
+        """Configure a new Pterodactyl panel connection."""
+        if not await require_permission(interaction, 'server_setup'):
+            return
+
+        modal = PterodactylSetupModal(self.bot)
+        await interaction.response.send_modal(modal)
 
     @app_commands.command(name="connections", description="List Pterodactyl connections")
     @app_commands.guild_only()
