@@ -25,7 +25,7 @@ Advanced features requiring subscription:
 | Feature ID | Display Name | Status | Description |
 |------------|--------------|--------|-------------|
 | `rcon` | RCON Integration | ✅ Implemented | Direct server commands (kick, ban, announce, verify) |
-| `pterodactyl` | Pterodactyl Panel Control | ❌ Not Implemented | Server power control, file management, console access |
+| `pterodactyl` | Pterodactyl Panel Control | ✅ Implemented | Server power control, file management, console access |
 | `log_monitoring` | SFTP Log Monitoring | ✅ Implemented | Real-time game logs (chat, kills, admin actions, join/leave) |
 | `advanced_analytics` | Advanced Analytics | ❌ Not Implemented | Player statistics, trends, retention metrics |
 | `custom_branding` | Custom Bot Branding | ❌ Not Implemented | Custom bot avatar, name, embed colors |
@@ -50,9 +50,11 @@ Advanced features requiring subscription:
    - Supports multi-server setups (2-5 servers per guild)
 
 2. **Pterodactyl Panel Control** - Full server management from Discord
-   - Power control (start/stop/restart)
-   - File browsing and editing
+   - Power control (start/stop/restart/kill)
+   - File browsing, reading, editing, and downloading
    - Console command execution
+   - Server resource monitoring (CPU, RAM, disk)
+   - Multi-server support with auto-discovery
    - Significant value for server hosts
 
 3. **SFTP Log Monitoring** - Real-time game event feeds
@@ -88,13 +90,80 @@ Advanced features requiring subscription:
 - Auto-Ban (3 strikes)
 - DM Notifications
 - **RCON Integration** (multi-server, verification, auto-enforcement)
+- **Pterodactyl Panel Control** (power, files, console via /server commands)
 - **SFTP Log Monitoring** (chat, kills, admin, join/leave with Game.ini admin detection)
 
 ### ❌ Not Yet Implemented
-- **Pterodactyl Panel Control** (planned premium feature - power, files, console)
 - Advanced Analytics (future premium feature)
 - Custom Branding (future premium feature)
 - REST API Access (future premium feature)
+
+## Pterodactyl Integration Details
+
+The Pterodactyl integration provides comprehensive game server management through Discord. All commands are under the `/server` group.
+
+### Available Commands
+
+**Setup & Configuration:**
+- `/server setup` - Configure Pterodactyl panel connection
+  - Tests connection and auto-discovers servers
+  - Saves API credentials securely
+- `/server connections` - List all configured Pterodactyl connections
+- `/server list` - List all servers from Pterodactyl panel
+
+**Server Information:**
+- `/server info` - Show detailed server information
+  - Current status (running/offline/starting)
+  - CPU, RAM, disk usage
+  - Network statistics
+  - Uptime
+
+**Power Control:**
+- `/server start` - Start a game server
+- `/server stop` - Stop a game server gracefully
+- `/server restart` - Restart a game server
+- `/server kill` - Force kill a server (emergency use)
+
+**File Operations:**
+- `/server files` - List files in a directory
+  - Browse server file system
+  - View file sizes and modification dates
+- `/server readfile` - Read contents of a file
+  - View configuration files
+  - Check logs
+- `/server editfile` - Edit a file on the server
+  - Modify Game.ini, ServerSettings, etc.
+  - Changes saved directly to server
+- `/server download` - Get download link for a file
+  - Temporary signed URL for file download
+
+**Console Access:**
+- `/server console` - Send command to server console
+  - Execute any console command
+  - Useful for admin commands, saves, etc.
+
+### Implementation Files
+
+- **services/pterodactyl.py** - API wrapper for py-dactyl library
+  - PterodactylClient class for API operations
+  - PterodactylManager for multi-connection support
+  - Async methods for all operations
+
+- **cogs/admin/servercontrol.py** - Discord command handlers
+  - `/server` command group (GroupCog)
+  - Permission checks via `require_permission`
+  - Rich Discord embeds for responses
+
+- **database/queries/rcon.py** - PterodactylQueries class
+  - Connection management (add, get, list, remove)
+  - Server discovery and caching
+  - Connection status tracking
+
+### Database Tables
+
+- **pterodactyl_connections** - Panel API credentials
+- **pterodactyl_servers** - Auto-discovered servers from API
+- Links to SFTP config for log monitoring integration
 
 ## Premium Tier Structure (Proposed)
 
@@ -168,7 +237,7 @@ Each feature has associated commands defined in `FEATURE_COMMANDS` (config/comma
 - `tickets`: ticket (user command), ticketsetup, closeticket
 - `player_linking`: myid, playerid, linksteam, linkalderon
 - `rcon`: rcon commands (addserver, kick, ban, announce, verify)
-- `pterodactyl`: server commands (start, stop, restart, files)
+- `pterodactyl`: server commands (setup, connections, list, info, start, stop, restart, kill, files, readfile, editfile, download, console)
 - `log_monitoring`: logs commands (setup, setchannel, start, stop)
 
 ## Recommendations
