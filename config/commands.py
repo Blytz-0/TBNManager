@@ -33,7 +33,7 @@ COMMAND_CATEGORIES = {
     ],
     # Premium: Pterodactyl Control
     'Server': [
-        'server_help', 'server_setup', 'server_connections', 'server_list', 'server_info',
+        'server_help', 'server_setup', 'server_connections', 'server_refresh', 'server_list', 'server_info',
         'server_start', 'server_stop', 'server_restart', 'server_kill',
         'server_files', 'server_readfile', 'server_editfile', 'server_download', 'server_console'
     ],
@@ -67,7 +67,7 @@ FEATURE_COMMANDS = {
         'rcon_disableai', 'rcon_aidensity', 'rcon_startverify', 'rcon_verify'
     ],
     'pterodactyl': [
-        'server_help', 'server_setup', 'server_connections', 'server_list', 'server_info',
+        'server_help', 'server_setup', 'server_connections', 'server_refresh', 'server_list', 'server_info',
         'server_start', 'server_stop', 'server_restart', 'server_kill',
         'server_files', 'server_readfile', 'server_editfile', 'server_download', 'server_console'
     ],
@@ -183,6 +183,7 @@ COMMAND_DESCRIPTIONS = {
     'server_help': '[Premium] Show all server commands',
     'server_setup': '[Premium] Configure Pterodactyl connection',
     'server_connections': '[Premium] List Pterodactyl connections',
+    'server_refresh': '[Premium] Re-discover servers from panel',
     'server_list': '[Premium] List game servers',
     'server_info': '[Premium] Show server info and resources',
     'server_start': '[Premium] Start game server',

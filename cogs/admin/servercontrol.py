@@ -263,6 +263,102 @@ class ServerControlCommands(commands.GroupCog, name="server"):
                 ephemeral=True
             )
 
+    @app_commands.command(name="refresh", description="Re-discover servers from Pterodactyl panel")
+    @app_commands.guild_only()
+    async def refresh_servers(self, interaction: discord.Interaction):
+        """Re-discover servers from existing Pterodactyl connections."""
+        if not await require_permission(interaction, 'server_setup'):
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            connections = PterodactylQueries.get_connections(interaction.guild_id)
+
+            if not connections:
+                await interaction.followup.send(
+                    "No Pterodactyl connections configured. Use `/server setup` to add one.",
+                    ephemeral=True
+                )
+                return
+
+            total_discovered = 0
+            connection_results = []
+
+            for conn in connections:
+                try:
+                    # Use stored API key to reconnect
+                    client = PterodactylClient(conn['panel_url'], conn['api_key'])
+
+                    # Test connection
+                    test_result = await client.test_connection()
+                    if not test_result.success:
+                        connection_results.append(
+                            f"❌ **{conn['connection_name']}**: {test_result.message}"
+                        )
+                        continue
+
+                    # Discover servers
+                    servers = await client.list_servers()
+
+                    # Clear old servers for this connection
+                    PterodactylQueries.clear_discovered_servers(conn['id'])
+
+                    # Save newly discovered servers
+                    for server in servers:
+                        PterodactylQueries.add_discovered_server(
+                            connection_id=conn['id'],
+                            guild_id=interaction.guild_id,
+                            server_id=server.server_id,
+                            server_name=server.name,
+                            server_uuid=server.uuid
+                        )
+
+                    total_discovered += len(servers)
+                    connection_results.append(
+                        f"✅ **{conn['connection_name']}**: Found {len(servers)} server(s)"
+                    )
+
+                except Exception as e:
+                    logger.error(f"Error refreshing connection {conn['connection_name']}: {e}", exc_info=True)
+                    connection_results.append(
+                        f"❌ **{conn['connection_name']}**: {str(e)}"
+                    )
+
+            # Build response embed
+            embed = discord.Embed(
+                title="🔄 Server Discovery Complete",
+                description=f"Discovered **{total_discovered}** total server(s)",
+                color=discord.Color.green() if total_discovered > 0 else discord.Color.orange()
+            )
+
+            embed.add_field(
+                name="Connection Results",
+                value="\n".join(connection_results),
+                inline=False
+            )
+
+            if total_discovered == 0:
+                embed.add_field(
+                    name="⚠️ No Servers Found",
+                    value="Make sure:\n"
+                          "• Your API key has access to servers\n"
+                          "• Servers are assigned to your account in the panel\n"
+                          "• The API key is a **Client API Key** (ptlc_), not Application key",
+                    inline=False
+                )
+
+            embed.set_footer(text="Use /server list to view all discovered servers")
+
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+        except Exception as e:
+            logger.error(f"Error refreshing servers: {e}", exc_info=True)
+            await interaction.followup.send(
+                f"❌ **Error**\n\nAn unexpected error occurred: {str(e)}",
+                ephemeral=True
+            )
+
     # ==========================================
     # SERVER INFORMATION
     # ==========================================
@@ -812,7 +908,7 @@ class ServerControlCommands(commands.GroupCog, name="server"):
 
         # Filter server commands
         server_commands = [
-            'server_setup', 'server_connections', 'server_list', 'server_info',
+            'server_setup', 'server_connections', 'server_refresh', 'server_list', 'server_info',
             'server_start', 'server_stop', 'server_restart', 'server_kill',
             'server_files', 'server_readfile', 'server_editfile', 'server_download',
             'server_console'
@@ -837,7 +933,7 @@ class ServerControlCommands(commands.GroupCog, name="server"):
         # Group commands by category
         categories = {
             "Setup & Configuration": [
-                'server_setup', 'server_connections', 'server_list'
+                'server_setup', 'server_connections', 'server_refresh', 'server_list'
             ],
             "Server Information": [
                 'server_info'

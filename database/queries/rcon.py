@@ -272,6 +272,16 @@ class PterodactylQueries:
             return cursor.lastrowid
 
     @staticmethod
+    def clear_discovered_servers(connection_id: int):
+        """Clear all discovered servers for a connection before re-discovery."""
+        with get_cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM pterodactyl_servers WHERE connection_id = %s",
+                (connection_id,)
+            )
+            logger.info(f"Cleared discovered servers for connection {connection_id}")
+
+    @staticmethod
     def get_pterodactyl_servers(guild_id: int, connection_id: int = None) -> list:
         """Get Pterodactyl servers for a guild, optionally filtered by connection."""
         with get_cursor() as cursor:
@@ -438,10 +448,24 @@ class LogChannelQueries:
 
     @staticmethod
     def set_channel(guild_id: int, channel_type: str, channel_id: int):
-        """Set a log channel. channel_type: chatlog, killfeed, adminlog, link, restart."""
+        """
+        Set a log channel.
+
+        Args:
+            guild_id: Guild ID
+            channel_type: One of: player_login, player_logout, player_chat, admin_command,
+                         player_death, rcon_command, chatlog, killfeed, adminlog, link, restart
+            channel_id: Discord channel ID
+        """
         column_name = f"{channel_type}_channel_id"
-        valid_columns = ['chatlog_channel_id', 'killfeed_channel_id', 'adminlog_channel_id',
-                         'link_channel_id', 'restart_channel_id']
+        valid_columns = [
+            # New enhanced log channels
+            'player_login_channel_id', 'player_logout_channel_id', 'player_chat_channel_id',
+            'admin_command_channel_id', 'player_death_channel_id', 'rcon_command_channel_id',
+            # Legacy channels (kept for backwards compatibility)
+            'chatlog_channel_id', 'killfeed_channel_id', 'adminlog_channel_id',
+            'link_channel_id', 'restart_channel_id'
+        ]
 
         if column_name not in valid_columns:
             raise ValueError(f"Invalid channel type: {channel_type}")
@@ -452,6 +476,50 @@ class LogChannelQueries:
                     VALUES (%s, %s)
                     ON DUPLICATE KEY UPDATE {column_name} = VALUES({column_name})""",
                 (guild_id, channel_id)
+            )
+
+    @staticmethod
+    def set_multiple_channels(guild_id: int, channels: dict):
+        """
+        Set multiple log channels at once.
+
+        Args:
+            guild_id: Guild ID
+            channels: Dict of channel_type: channel_id pairs
+                     Example: {'player_login': 123456, 'player_logout': 123456}
+        """
+        if not channels:
+            return
+
+        valid_columns = [
+            'player_login_channel_id', 'player_logout_channel_id', 'player_chat_channel_id',
+            'admin_command_channel_id', 'player_death_channel_id', 'rcon_command_channel_id',
+            'chatlog_channel_id', 'killfeed_channel_id', 'adminlog_channel_id',
+            'link_channel_id', 'restart_channel_id'
+        ]
+
+        updates = []
+        params = [guild_id]
+        for channel_type, channel_id in channels.items():
+            column_name = f"{channel_type}_channel_id"
+            if column_name in valid_columns:
+                updates.append(f"{column_name} = %s")
+                params.append(channel_id)
+
+        if not updates:
+            return
+
+        with get_cursor() as cursor:
+            # Build INSERT with all columns that have values
+            insert_columns = ['guild_id'] + [f"{k}_channel_id" for k in channels.keys() if f"{k}_channel_id" in valid_columns]
+            insert_placeholders = ['%s'] * len(insert_columns)
+            insert_values = [guild_id] + [v for k, v in channels.items() if f"{k}_channel_id" in valid_columns]
+
+            cursor.execute(
+                f"""INSERT INTO guild_log_channels ({', '.join(insert_columns)})
+                    VALUES ({', '.join(insert_placeholders)})
+                    ON DUPLICATE KEY UPDATE {', '.join(updates)}""",
+                insert_values + params[1:]  # Skip guild_id in update params
             )
 
 
