@@ -246,7 +246,10 @@ class PterodactylClient:
                 client.client.servers.get_server,
                 server_id
             )
+            logger.debug(f"get_server_info response: {response}")
             attrs = response.get('attributes', {})
+            if not attrs:
+                logger.warning(f"get_server_info returned empty attributes for server {server_id}")
             return ServerInfo(
                 server_id=attrs.get('identifier', server_id),
                 name=attrs.get('name', 'Unknown'),
@@ -258,7 +261,7 @@ class PterodactylClient:
                 allocation=attrs.get('allocation', {})
             )
         except Exception as e:
-            logger.error(f"Failed to get server info: {e}")
+            logger.error(f"Failed to get server info: {e}", exc_info=True)
             return None
 
     async def get_server_resources(self, server_id: str) -> Optional[ServerResources]:
@@ -269,7 +272,11 @@ class PterodactylClient:
                 client.client.servers.get_server_utilization,
                 server_id
             )
+            logger.debug(f"get_server_utilization response: {response}")
             attrs = response.get('attributes', {})
+            if not attrs:
+                logger.warning(f"get_server_utilization returned empty attributes for server {server_id}")
+                logger.warning(f"Full response: {response}")
             resources = attrs.get('resources', {})
             return ServerResources(
                 cpu_percent=resources.get('cpu_absolute', 0),
@@ -282,7 +289,7 @@ class PterodactylClient:
                 uptime_seconds=resources.get('uptime', 0)
             )
         except Exception as e:
-            logger.error(f"Failed to get server resources: {e}")
+            logger.error(f"Failed to get server resources: {e}", exc_info=True)
             return None
 
     # ==========================================
@@ -304,9 +311,15 @@ class PterodactylClient:
                 server_id,
                 directory
             )
+            logger.debug(f"list_files response for {server_id} at {directory}: {response}")
 
             files = []
-            for file_data in response.get('data', []):
+            data = response.get('data', [])
+            if not data:
+                logger.warning(f"list_files returned no data for server {server_id} at {directory}")
+                logger.warning(f"Full response: {response}")
+
+            for file_data in data:
                 attrs = file_data.get('attributes', {})
                 files.append(FileInfo(
                     name=attrs.get('name', ''),
@@ -321,7 +334,7 @@ class PterodactylClient:
                 ))
             return files
         except Exception as e:
-            logger.error(f"Failed to list files: {e}")
+            logger.error(f"Failed to list files in {directory}: {e}", exc_info=True)
             return []
 
     async def read_file(self, server_id: str, file_path: str) -> Optional[str]:
