@@ -80,7 +80,7 @@ FEATURE_DESCRIPTIONS = {
     'api_access': 'REST API Access',
     'rcon': 'RCON Integration',
     'pterodactyl': 'Pterodactyl Panel Control',
-    'log_monitoring': 'SFTP Log Monitoring',
+    'log_monitoring': 'SFTP Log Monitoring (The Isle Evrima)',
 }
 
 # ===========================================

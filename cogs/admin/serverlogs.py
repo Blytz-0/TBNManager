@@ -1661,7 +1661,8 @@ class ServerLogsCommands(commands.GroupCog, name="sftplogs"):
 
         embed = discord.Embed(
             title="SFTP Log Monitoring Commands (Premium)",
-            description="Real-time game server log monitoring via SFTP",
+            description="Real-time log monitoring via SFTP for **The Isle Evrima**\n"
+                        "_Parsing designed specifically for The Isle Evrima log format_",
             color=discord.Color.blue()
         )
 
@@ -1695,14 +1696,24 @@ class ServerLogsCommands(commands.GroupCog, name="sftplogs"):
                 )
 
         embed.add_field(
-            name="Log Types",
-            value="• **Chat** - Player chat messages\n"
-                  "• **Kills** - Death/kill feed\n"
-                  "• **Admin** - Admin actions and RCON commands",
+            name="Monitored Events (The Isle Evrima)",
+            value="• **Player Login/Logout** - Join/leave with dinosaur, gender, growth\n"
+                  "• **Chat Messages** - Global, Admin, Spatial, Logging channels\n"
+                  "• **Death/Kill Feed** - Victim & killer with growth, gender, Prime status\n"
+                  "• **Admin Commands** - In-game admin actions with targets\n"
+                  "• **RCON Commands** - Discord RCON command execution\n"
+                  "• **Admin Detection** - Automatic via Game.ini parsing",
             inline=False
         )
 
-        embed.set_footer(text=f"You have access to {len(visible)} log monitoring commands")
+        embed.add_field(
+            name="⚠️ Game Support",
+            value="Log parsing is currently exclusive to **The Isle Evrima**.\n"
+                  "Support for additional games (Path of Titans, etc.) can be added in future updates.",
+            inline=False
+        )
+
+        embed.set_footer(text=f"You have access to {len(visible)} log monitoring commands | The Isle Evrima only")
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

@@ -26,7 +26,7 @@ Advanced features requiring subscription:
 |------------|--------------|--------|-------------|
 | `rcon` | RCON Integration | ✅ Implemented | Direct server commands (kick, ban, announce, verify) |
 | `pterodactyl` | Pterodactyl Panel Control | ✅ Implemented | Server power control, file management, console access |
-| `log_monitoring` | SFTP Log Monitoring | ✅ Implemented | Real-time game logs (chat, kills, admin actions, join/leave) |
+| `log_monitoring` | SFTP Log Monitoring | ✅ Implemented | Real-time The Isle Evrima logs (login/logout, chat, death/kills, admin/RCON commands) |
 | `advanced_analytics` | Advanced Analytics | ❌ Not Implemented | Player statistics, trends, retention metrics |
 | `custom_branding` | Custom Bot Branding | ❌ Not Implemented | Custom bot avatar, name, embed colors |
 | `api_access` | REST API Access | ❌ Not Implemented | External API access to bot data |
@@ -57,12 +57,19 @@ Advanced features requiring subscription:
    - Multi-server support with auto-discovery
    - Significant value for server hosts
 
-3. **SFTP Log Monitoring** - Real-time game event feeds
+3. **SFTP Log Monitoring** - Real-time game event feeds for The Isle Evrima
    - Continuous SFTP connections (resource intensive)
-   - Advanced parsing and display
-   - Multiple log types (chat, kills, admin, join/leave)
+   - Advanced parsing and display with structured embeds
+   - **Currently supports: The Isle Evrima only**
+   - Multiple event types parsed from The Isle Evrima logs:
+     - Player Login/Logout (dinosaur, gender, growth tracking)
+     - Chat Messages (Global, Admin, Spatial, Logging channels)
+     - Death/Kill Feed (victim & killer with Prime status)
+     - Admin Commands (in-game admin actions)
+     - RCON Commands (Discord-triggered commands)
    - Configurable channel routing
    - Admin detection via Game.ini parsing
+   - **Expandable**: Additional games can be supported with game-specific parsers
 
 4. **Advanced Analytics** - Business intelligence features
    - Complex data processing
@@ -91,7 +98,7 @@ Advanced features requiring subscription:
 - DM Notifications
 - **RCON Integration** (multi-server, verification, auto-enforcement)
 - **Pterodactyl Panel Control** (power, files, console via /server commands)
-- **SFTP Log Monitoring** (chat, kills, admin, join/leave with Game.ini admin detection)
+- **SFTP Log Monitoring** (The Isle Evrima: login/logout, chat channels, death/kill feed, admin/RCON commands with Game.ini admin detection)
 
 ### ❌ Not Yet Implemented
 - Advanced Analytics (future premium feature)
@@ -164,6 +171,78 @@ The Pterodactyl integration provides comprehensive game server management throug
 - **pterodactyl_connections** - Panel API credentials
 - **pterodactyl_servers** - Auto-discovered servers from API
 - Links to SFTP config for log monitoring integration
+
+## SFTP Log Monitoring Details
+
+The SFTP log monitoring system provides real-time game event feeds to Discord channels. All commands are under the `/sftplogs` group.
+
+### Game Support
+
+**Currently Supported:**
+- ✅ **The Isle Evrima** - Full log parsing with 6 event types
+
+**Future Expansion:**
+- The system is designed to be expandable
+- Each game requires custom parsers for its specific log format
+- Planned support: Path of Titans, ARK, Rust (requires new parser development)
+
+### The Isle Evrima Event Types
+
+The parser recognizes and processes these event types from The Isle Evrima's unified log file:
+
+1. **Player Login/Logout**
+   - Player name, Steam ID
+   - Dinosaur type, gender, growth percentage
+   - Prime variant detection
+   - Safe logout detection
+
+2. **Chat Messages**
+   - Channel types: Global, Admin, Spatial, Logging
+   - Player identification
+   - Channel-based embed colors
+
+3. **Death/Kill Feed**
+   - Victim information (name, dinosaur, gender, growth, Prime status)
+   - Killer information (if applicable)
+   - Cause of death parsing
+   - Natural deaths vs combat kills
+
+4. **Admin Commands**
+   - In-game admin actions
+   - Target player information
+   - Command execution details
+
+5. **RCON Commands**
+   - Discord-triggered RCON commands
+   - Execution tracking
+
+6. **Admin Detection**
+   - Automatic detection via Game.ini parsing
+   - Shows "Admin: true/false" in all log embeds
+   - 5-minute cache TTL
+
+### Implementation Files
+
+- **services/log_parsers.py** - Event dataclasses and regex patterns (The Isle Evrima)
+- **services/log_embed_builder.py** - Discord embed formatting
+- **services/game_ini_cache.py** - Admin detection caching
+- **cogs/admin/serverlogs.py** - `/sftplogs` command group
+
+### Database Tables
+
+- **server_sftp_config** - SFTP connection credentials
+- **log_monitor_state** - File position tracking for incremental reading
+- **guild_log_channels** - Channel routing configuration
+
+### Why Game-Specific?
+
+Different games format their logs differently:
+- **The Isle Evrima**: `LogTheIsleKillData:`, `LogTheIsleParty:`, etc.
+- **Rust**: Different log format entirely
+- **ARK**: Different format and event types
+- **Path of Titans**: Similar to The Isle but different patterns
+
+Each game needs custom regex patterns and event structures.
 
 ## Premium Tier Structure (Proposed)
 
