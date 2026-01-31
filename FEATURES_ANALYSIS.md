@@ -25,7 +25,7 @@ Advanced features requiring subscription:
 | Feature ID | Display Name | Status | Description |
 |------------|--------------|--------|-------------|
 | `rcon` | RCON Integration | ✅ Implemented | Direct server commands (kick, ban, announce, verify) |
-| `pterodactyl` | Pterodactyl Panel Control | ✅ Implemented | Server power control, file management, console access |
+| `pterodactyl` | Pterodactyl Panel Control | ❌ Not Implemented | Server power control, file management, console access |
 | `log_monitoring` | SFTP Log Monitoring | ✅ Implemented | Real-time game logs (chat, kills, admin actions, join/leave) |
 | `advanced_analytics` | Advanced Analytics | ❌ Not Implemented | Player statistics, trends, retention metrics |
 | `custom_branding` | Custom Bot Branding | ❌ Not Implemented | Custom bot avatar, name, embed colors |
@@ -88,10 +88,10 @@ Advanced features requiring subscription:
 - Auto-Ban (3 strikes)
 - DM Notifications
 - **RCON Integration** (multi-server, verification, auto-enforcement)
-- **Pterodactyl Control** (power, files, console)
 - **SFTP Log Monitoring** (chat, kills, admin, join/leave with Game.ini admin detection)
 
 ### ❌ Not Yet Implemented
+- **Pterodactyl Panel Control** (planned premium feature - power, files, console)
 - Advanced Analytics (future premium feature)
 - Custom Branding (future premium feature)
 - REST API Access (future premium feature)
