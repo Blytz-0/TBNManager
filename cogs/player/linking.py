@@ -11,7 +11,10 @@ import re
 import discord
 from discord import app_commands
 from discord.ext import commands
-from database.queries import PlayerQueries, GuildQueries, AuditQueries
+from database.queries import (
+    PlayerQueries, GuildQueries, AuditQueries, VerificationCodeQueries,
+    GuildRCONSettingsQueries, LogChannelQueries
+)
 from services.steam_api import SteamAPI, SteamAPIError
 from services.permissions import require_permission
 import logging
@@ -261,6 +264,149 @@ class PlayerLinking(commands.Cog):
                     "An error occurred while linking your Steam ID. Please try again later.",
                     ephemeral=True
                 )
+
+    # ==========================================
+    # CHAT-BASED VERIFICATION (PREMIUM)
+    # ==========================================
+
+    @app_commands.command(
+        name="verifymyid",
+        description="[Premium] Verify your identity by typing a code in-game chat"
+    )
+    @app_commands.guild_only()
+    @app_commands.describe(
+        game="Which game you're playing"
+    )
+    @app_commands.choices(game=[
+        app_commands.Choice(name="The Isle: Evrima", value="the_isle_evrima"),
+        app_commands.Choice(name="Path of Titans", value="path_of_titans"),
+    ])
+    async def verify_myid(self, interaction: discord.Interaction, game: str):
+        """
+        Generate a verification code for the user to type in-game.
+        The log monitoring system will detect it and link their account.
+        """
+        try:
+            # Ensure guild exists
+            GuildQueries.get_or_create(interaction.guild_id, interaction.guild.name)
+
+            # Check if feature is enabled
+            if not GuildQueries.is_feature_enabled(interaction.guild_id, 'player_linking'):
+                await interaction.response.send_message(
+                    "Player linking is not enabled on this server.",
+                    ephemeral=True
+                )
+                return
+
+            # Check if log monitoring is enabled (required for chat verification)
+            settings = GuildRCONSettingsQueries.get_or_create_settings(interaction.guild_id)
+            if not settings.get('log_monitoring_enabled'):
+                await interaction.response.send_message(
+                    "❌ **Chat-based verification requires log monitoring.**\n\n"
+                    "This server hasn't set up SFTP log monitoring yet.\n"
+                    "Ask an admin to run `/logs setup` first.\n\n"
+                    "Alternative: Use `/linksteam` or `/alderonid` to link directly.",
+                    ephemeral=True
+                )
+                return
+
+            # Check if user already has an ID linked
+            current = PlayerQueries.get_by_user(interaction.guild_id, interaction.user.id)
+            if game == 'the_isle_evrima' and current and current.get('steam_id'):
+                await interaction.response.send_message(
+                    f"You already have a Steam ID linked: `{current['steam_id']}`\n\n"
+                    "Your ID is locked for security. Contact an admin to unlock.",
+                    ephemeral=True
+                )
+                return
+            elif game == 'path_of_titans' and current and current.get('player_id'):
+                await interaction.response.send_message(
+                    f"You already have an Alderon ID linked: `{current['player_id']}`\n\n"
+                    "Your ID is locked for security. Contact an admin to unlock.",
+                    ephemeral=True
+                )
+                return
+
+            # Generate verification code
+            code = VerificationCodeQueries.create_code(
+                guild_id=interaction.guild_id,
+                user_id=interaction.user.id,
+                game_type=game,
+                timeout_minutes=settings.get('verification_timeout_minutes', 10)
+            )
+
+            # Get game-specific instructions
+            if game == 'the_isle_evrima':
+                game_name = "The Isle: Evrima"
+                instructions = (
+                    "1. Join the game server\n"
+                    "2. Open **global chat** (press `Enter`)\n"
+                    "3. Type exactly: `{code}`\n"
+                    "4. Send the message"
+                )
+            else:
+                game_name = "Path of Titans"
+                instructions = (
+                    "1. Join the game server\n"
+                    "2. Open **global chat** (press `Enter`)\n"
+                    "3. Type exactly: `{code}`\n"
+                    "4. Send the message"
+                )
+
+            embed = discord.Embed(
+                title=f"🔐 Verification Code Generated",
+                description=f"To verify your identity for **{game_name}**, follow these steps:",
+                color=discord.Color.blue()
+            )
+
+            embed.add_field(
+                name="Your Verification Code",
+                value=f"```\n{code}\n```",
+                inline=False
+            )
+
+            embed.add_field(
+                name="Instructions",
+                value=instructions.format(code=code),
+                inline=False
+            )
+
+            embed.add_field(
+                name="⏱️ Code Expires In",
+                value=f"{settings.get('verification_timeout_minutes', 10)} minutes",
+                inline=True
+            )
+
+            embed.add_field(
+                name="✅ What Happens Next",
+                value="The bot will automatically detect your message and link your account!",
+                inline=False
+            )
+
+            embed.set_footer(text="This is much safer than RCON-based verification")
+
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+            # Also send a message to the link channel (if configured) to notify admins
+            channels = LogChannelQueries.get_channels(interaction.guild_id)
+            if channels and channels.get('link_channel_id'):
+                link_channel = self.bot.get_channel(channels['link_channel_id'])
+                if link_channel:
+                    notify_embed = discord.Embed(
+                        title="🔐 Verification Code Requested",
+                        description=f"{interaction.user.mention} is attempting to verify for **{game_name}**",
+                        color=discord.Color.blue()
+                    )
+                    notify_embed.add_field(name="Code", value=f"`{code}`", inline=True)
+                    notify_embed.add_field(name="Expires", value=f"{settings.get('verification_timeout_minutes', 10)} min", inline=True)
+                    await link_channel.send(embed=notify_embed)
+
+        except Exception as e:
+            logger.error(f"Error in /verifymyid: {e}", exc_info=True)
+            await interaction.response.send_message(
+                "An error occurred while generating your verification code.",
+                ephemeral=True
+            )
 
     # ==========================================
     # ADMIN: UNLOCK ID

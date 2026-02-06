@@ -17,7 +17,7 @@ from database.queries import (
     LogMonitorStateQueries, GuildRCONSettingsQueries, VerificationCodeQueries,
     PlayerQueries, AuditQueries, RCONCommandLogQueries
 )
-from services.permissions import require_permission
+from services.permissions import require_permission, get_user_allowed_commands
 from services.sftp_logs import (
     SFTPLogReader, LogMonitor, log_monitor_manager, LogType,
     GameLogType, ChatLogEntry, KillLogEntry, AdminLogEntry
@@ -400,6 +400,131 @@ class SetChannelsView(discord.ui.View):
                 f"❌ Error: {e}",
                 ephemeral=True
             )
+
+
+class LogsCommandSelect(discord.ui.Select):
+    """Dropdown menu for selecting Log Monitor Dashboard commands."""
+
+    def __init__(self, category: str, cog, user_permissions: set, panel_message=None):
+        self.cog = cog
+        self.category = category
+        self.user_permissions = user_permissions
+        self.panel_message = panel_message
+
+        # Map command values to permission names
+        permission_map = {
+            "setup": "inpanel_logs_setup",
+            "setpath": "inpanel_logs_setpath",
+            "setchannel": "inpanel_logs_setchannel",
+            "start": "inpanel_logs_start",
+            "stop": "inpanel_logs_stop",
+            "status": "inpanel_logs_status",
+            "browse": "inpanel_logs_browse",
+            "readfile": "inpanel_logs_readfile",
+        }
+
+        # Define options based on category
+        options_map = {
+            "setup": [
+                discord.SelectOption(label="Configure SFTP", value="setup", description="Setup SFTP connection", emoji="⚙️"),
+                discord.SelectOption(label="Set Log File Path", value="setpath", description="Configure unified log file path", emoji="📂"),
+                discord.SelectOption(label="Set Log Channels", value="setchannel", description="Configure Discord channels", emoji="📺"),
+            ],
+            "monitoring": [
+                discord.SelectOption(label="Start Monitoring", value="start", description="Start log monitoring", emoji="▶️"),
+                discord.SelectOption(label="Stop Monitoring", value="stop", description="Stop log monitoring", emoji="⏹️"),
+                discord.SelectOption(label="View Status", value="status", description="Show monitoring status", emoji="📊"),
+            ],
+            "files": [
+                discord.SelectOption(label="Browse Files", value="browse", description="Browse SFTP directory", emoji="📁"),
+                discord.SelectOption(label="Read File", value="readfile", description="View file contents", emoji="📄"),
+            ],
+        }
+
+        # Filter options based on user permissions
+        all_options = options_map.get(category, [])
+        filtered_options = [
+            opt for opt in all_options
+            if permission_map.get(opt.value) in user_permissions
+        ]
+
+        options = filtered_options
+
+        # Set placeholder based on category
+        placeholders = {
+            "setup": "Setup & Configuration",
+            "monitoring": "Monitoring Control",
+            "files": "File Operations",
+        }
+
+        super().__init__(
+            placeholder=placeholders.get(category, "Select a command"),
+            options=options,
+            row={"setup": 0, "monitoring": 1, "files": 2}.get(category, 0)
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        """Handle command selection."""
+        command = self.values[0]
+
+        # Route to appropriate command handler
+        try:
+            if command == "setup":
+                await self.cog._menu_setup(interaction)
+            elif command == "setpath":
+                await self.cog._menu_setpath(interaction)
+            elif command == "setchannel":
+                await self.cog._menu_setchannel(interaction)
+            elif command == "start":
+                await self.cog._menu_start(interaction)
+            elif command == "stop":
+                await self.cog._menu_stop(interaction)
+            elif command == "status":
+                await self.cog._menu_status(interaction)
+            elif command == "browse":
+                await self.cog._menu_browse(interaction)
+            elif command == "readfile":
+                await self.cog._menu_readfile(interaction)
+            else:
+                await interaction.response.send_message(
+                    f"❌ Unknown command: {command}",
+                    ephemeral=True
+                )
+        except Exception as e:
+            logger.error(f"Error handling menu command {command}: {e}", exc_info=True)
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    f"❌ Error executing command: {e}",
+                    ephemeral=True
+                )
+        finally:
+            # Refresh the panel dropdown to allow reselection
+            if self.panel_message and self.user_permissions:
+                try:
+                    await self.cog._refresh_panel(self.panel_message, self.user_permissions)
+                except Exception as refresh_error:
+                    logger.error(f"Error refreshing Logs panel: {refresh_error}", exc_info=True)
+
+
+class LogsCommandView(discord.ui.View):
+    """Main view with all Log Monitor Dashboard command dropdowns."""
+
+    def __init__(self, cog, user_permissions: set, panel_message=None):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.panel_message = panel_message
+
+        # Define which permissions belong to each category
+        category_permissions = {
+            "setup": {"inpanel_logs_setup", "inpanel_logs_setpath", "inpanel_logs_setchannel"},
+            "monitoring": {"inpanel_logs_start", "inpanel_logs_stop", "inpanel_logs_status"},
+            "files": {"inpanel_logs_browse", "inpanel_logs_readfile"}
+        }
+
+        # Add category dropdowns only if user has at least one permission in that category
+        for category in ["setup", "monitoring", "files"]:
+            if user_permissions & category_permissions[category]:  # Check if any permission in category
+                self.add_item(LogsCommandSelect(category, cog, user_permissions, panel_message))
 
 
 class ServerLogsCommands(commands.GroupCog, name="sftplogs"):
@@ -1295,20 +1420,52 @@ class ServerLogsCommands(commands.GroupCog, name="sftplogs"):
                     file_size = stat.st_size
                     mod_time = datetime.fromtimestamp(stat.st_mtime)
 
-                    # Read last 3000 bytes (last ~30-50 lines)
-                    read_from = max(0, file_size - 3000)
-                    with reader._sftp.open(file_path, 'r') as f:
-                        f.seek(read_from)
-                        content = f.read()
-                        if isinstance(content, bytes):
-                            content = content.decode('utf-8', errors='replace')
-                        lines = content.splitlines()[-30:]  # Last 30 lines
+                    # Determine file type from extension
+                    file_lower = file_path.lower()
+                    is_config_file = file_lower.endswith(('.ini', '.conf', '.cfg', '.config'))
+                    is_log_file = file_lower.endswith(('.log', '.txt'))
+
+                    lines = []
+                    display_type = "content"
+
+                    if is_config_file:
+                        # For config files (.ini, .conf), read FULL content
+                        with reader._sftp.open(file_path, 'r') as f:
+                            content = f.read()
+                            if isinstance(content, bytes):
+                                content = content.decode('utf-8', errors='replace')
+                            lines = content.splitlines()
+                        display_type = "full"
+
+                    elif is_log_file:
+                        # For log files, read LAST 50 lines
+                        # Calculate approximate bytes to read (assume ~100 chars per line)
+                        read_from = max(0, file_size - 5500)  # ~50 lines * 100 chars + buffer
+                        with reader._sftp.open(file_path, 'r') as f:
+                            f.seek(read_from)
+                            content = f.read()
+                            if isinstance(content, bytes):
+                                content = content.decode('utf-8', errors='replace')
+                            lines = content.splitlines()[-50:]  # Last 50 lines
+                        display_type = "last_50"
+
+                    else:
+                        # For other files, read last 3000 bytes (fallback)
+                        read_from = max(0, file_size - 3000)
+                        with reader._sftp.open(file_path, 'r') as f:
+                            f.seek(read_from)
+                            content = f.read()
+                            if isinstance(content, bytes):
+                                content = content.decode('utf-8', errors='replace')
+                            lines = content.splitlines()[-30:]
+                        display_type = "last_30"
 
                     return {
                         'success': True,
                         'size': file_size,
                         'modified': mod_time,
-                        'lines': lines
+                        'lines': lines,
+                        'display_type': display_type
                     }
                 except FileNotFoundError:
                     return {'success': False, 'error': 'File not found'}
@@ -1329,7 +1486,16 @@ class ServerLogsCommands(commands.GroupCog, name="sftplogs"):
 
             # Build embed with file contents
             size_kb = result['size'] / 1024
-            content_preview = "\n".join(result['lines'][-15:])  # Last 15 lines
+            display_type = result.get('display_type', 'last_30')
+            lines = result['lines']
+
+            # Determine title based on display type
+            display_titles = {
+                'full': 'Full File Contents',
+                'last_50': 'Last 50 Lines',
+                'last_30': 'Last 30 Lines'
+            }
+            field_title = display_titles.get(display_type, 'File Contents')
 
             embed = discord.Embed(
                 title="📄 File Contents",
@@ -1337,13 +1503,48 @@ class ServerLogsCommands(commands.GroupCog, name="sftplogs"):
                 color=discord.Color.blue()
             )
 
-            embed.add_field(
-                name="Last 15 Lines",
-                value=f"```\n{content_preview[:1000]}\n```",
-                inline=False
-            )
+            # Handle content that may exceed Discord's limits
+            content_preview = "\n".join(lines)
 
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            # Discord embed field value limit is 1024 characters
+            # Discord embed total limit is 6000 characters
+            if len(content_preview) > 4000:
+                # If content is too large, split into multiple messages or truncate
+                chunks = []
+                current_chunk = ""
+                for line in lines:
+                    if len(current_chunk) + len(line) + 1 > 1900:  # Leave room for code block markers
+                        chunks.append(current_chunk)
+                        current_chunk = line + "\n"
+                    else:
+                        current_chunk += line + "\n"
+                if current_chunk:
+                    chunks.append(current_chunk)
+
+                # Send first embed with metadata
+                embed.add_field(
+                    name=f"{field_title} (Part 1/{len(chunks)})",
+                    value=f"```\n{chunks[0][:1000]}\n```",
+                    inline=False
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+
+                # Send remaining chunks as separate messages
+                for i, chunk in enumerate(chunks[1:], start=2):
+                    chunk_embed = discord.Embed(
+                        title=f"📄 {field_title} (Part {i}/{len(chunks)})",
+                        description=f"```\n{chunk[:4000]}\n```",
+                        color=discord.Color.blue()
+                    )
+                    await interaction.followup.send(embed=chunk_embed, ephemeral=True)
+            else:
+                # Content fits in single embed
+                embed.add_field(
+                    name=field_title,
+                    value=f"```\n{content_preview[:1000]}\n```",
+                    inline=False
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
 
         except Exception as e:
             logger.error(f"Error reading file: {e}", exc_info=True)
@@ -1517,11 +1718,15 @@ class ServerLogsCommands(commands.GroupCog, name="sftplogs"):
             if parent_path is not None:
                 nav_text.append(f"⬆️ **Go Up:** `path:{parent_path}`")
 
-            # Show subdirectory navigation
+            # Show ALL folder paths for easy copy/paste
             if dirs:
-                example_dir = dirs[0]['name']
-                new_path = f"{browse_path}/{example_dir}".replace('./', '').replace('//', '/')
-                nav_text.append(f"➡️ **Enter Folder:** `path:{new_path}`")
+                nav_text.append(f"\n**📁 All Folder Paths (copy/paste):**")
+                for item in dirs[:15]:  # Show first 15 folders to avoid embed limits
+                    new_path = f"{browse_path}/{item['name']}".replace('./', '').replace('//', '/')
+                    nav_text.append(f"• `path:{new_path}`")
+
+                if len(dirs) > 15:
+                    nav_text.append(f"...and {len(dirs) - 15} more folders")
 
             # Add shortcuts
             nav_text.append(f"\n**🔗 Quick Shortcuts:**")
@@ -1632,26 +1837,95 @@ class ServerLogsCommands(commands.GroupCog, name="sftplogs"):
                 ephemeral=True
             )
 
-    @app_commands.command(name="help", description="Show all available SFTP log monitoring commands")
+    @app_commands.command(name="panel", description="Open SFTP log monitoring panel with categorized options")
+    @app_commands.guild_only()
+    async def logs_panel(self, interaction: discord.Interaction):
+        """Show the SFTP log monitoring panel with dropdown selections."""
+        # Check if user has permission to access the panel
+        if not await require_permission(interaction, 'logs_panel'):
+            return
+
+        # Get user's allowed commands
+        user_permissions = get_user_allowed_commands(interaction.guild_id, interaction.user)
+
+        # Filter to only inpanel_logs_* permissions
+        inpanel_permissions = {perm for perm in user_permissions if perm.startswith('inpanel_logs_')}
+
+        # If user has no panel permissions, show error
+        if not inpanel_permissions:
+            await interaction.response.send_message(
+                "You don't have permission to use any SFTP logs panel features.\n"
+                "Contact an administrator to configure your permissions.",
+                ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title="📊 SFTP Log Monitor Panel",
+            description="Select a command from the dropdowns below:\n\n"
+                       "**Setup & Configuration** - Configure SFTP connection and channels\n"
+                       "**Monitoring Control** - Start/stop monitoring and view status\n"
+                       "**File Operations** - Browse files and read contents",
+            color=discord.Color.blue()
+        )
+
+        embed.set_footer(text="This panel will remain active for 5 minutes")
+
+        # Send initial message without view
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        # Get the message object and create view with message reference for refresh capability
+        panel_message = await interaction.original_response()
+        view = LogsCommandView(self, inpanel_permissions, panel_message)
+
+        # Edit message to add the view
+        await panel_message.edit(view=view)
+
+    async def _refresh_panel(self, panel_message, user_permissions: set):
+        """Refresh the panel dropdown by recreating the view."""
+        try:
+            embed = discord.Embed(
+                title="📊 SFTP Log Monitor Panel",
+                description="Select a command from the dropdowns below:\n\n"
+                           "**Setup & Configuration** - Configure SFTP connection and channels\n"
+                           "**Monitoring Control** - Start/stop monitoring and view status\n"
+                           "**File Operations** - Browse files and read contents",
+                color=discord.Color.blue()
+            )
+
+            embed.set_footer(text="This panel will remain active for 5 minutes")
+
+            # Create fresh view with reset dropdowns
+            view = LogsCommandView(self, user_permissions, panel_message)
+
+            # Edit the panel message to refresh the dropdowns
+            await panel_message.edit(embed=embed, view=view)
+        except Exception as e:
+            logger.error(f"Error refreshing Logs panel: {e}", exc_info=True)
+
+    @app_commands.command(name="help", description="Show SFTP log monitoring help")
     @app_commands.guild_only()
     async def sftplogs_help(self, interaction: discord.Interaction):
-        """Display detailed SFTP log monitoring command help."""
+        """Display detailed SFTP log monitoring help with menu introduction."""
         from config.commands import COMMAND_DESCRIPTIONS
         from services.permissions import get_user_allowed_commands
 
         # Get commands this user can access
         allowed = get_user_allowed_commands(interaction.guild_id, interaction.user)
 
+        # Check for panel access
+        has_panel_access = 'logs_panel' in allowed
+
         # Filter SFTP log commands
         sftplogs_commands = [
             'logs_setup', 'logs_setpath', 'logs_setchannel', 'logs_start',
-            'logs_stop', 'logs_status', 'logs_fileinfo', 'logs_test',
+            'logs_stop', 'logs_status', 'logs_test',
             'logs_readfile', 'logs_browse'
         ]
 
         visible = [cmd for cmd in sftplogs_commands if cmd in allowed]
 
-        if not visible:
+        if not visible and not has_panel_access:
             await interaction.response.send_message(
                 "You don't have access to any SFTP log monitoring commands.\n\n"
                 "Contact a server administrator to request permissions.",
@@ -1660,43 +1934,29 @@ class ServerLogsCommands(commands.GroupCog, name="sftplogs"):
             return
 
         embed = discord.Embed(
-            title="SFTP Log Monitoring Commands (Premium)",
+            title="📊 SFTP Log Monitoring",
             description="Real-time log monitoring via SFTP for **The Isle Evrima**\n"
                         "_Parsing designed specifically for The Isle Evrima log format_",
             color=discord.Color.blue()
         )
 
-        # Group commands by category
-        categories = {
-            "Setup & Configuration": [
-                'logs_setup', 'logs_setpath', 'logs_setchannel'
-            ],
-            "Monitoring Control": [
-                'logs_start', 'logs_stop', 'logs_status'
-            ],
-            "Debug & Testing": [
-                'logs_fileinfo', 'logs_test', 'logs_readfile', 'logs_browse'
-            ]
-        }
+        # Primary recommendation: Use the panel
+        if has_panel_access:
+            embed.add_field(
+                name="📊 Interactive Panel (Recommended)",
+                value="**Use `/sftplogs panel` for easy access to all features:**\n"
+                      "• Configure SFTP connections\n"
+                      "• Set log file paths and Discord channels\n"
+                      "• Start/stop real-time monitoring\n"
+                      "• Browse server files via SFTP\n"
+                      "• Read and search log files\n\n"
+                      "*The panel provides an organized interface with categorized dropdown selections.*",
+                inline=False
+            )
 
-        for category_name, category_commands in categories.items():
-            visible_in_category = [cmd for cmd in category_commands if cmd in visible]
-            if visible_in_category:
-                cmd_lines = []
-                for cmd in visible_in_category:
-                    # Remove 'logs_' prefix for display
-                    display_name = cmd.replace('logs_', '')
-                    desc = COMMAND_DESCRIPTIONS.get(cmd, '')
-                    cmd_lines.append(f"`/sftplogs {display_name}` - {desc}")
-
-                embed.add_field(
-                    name=category_name,
-                    value="\n".join(cmd_lines),
-                    inline=False
-                )
-
+        # Show what logs are monitored
         embed.add_field(
-            name="Monitored Events (The Isle Evrima)",
+            name="🔍 Monitored Events (The Isle Evrima)",
             value="• **Player Login/Logout** - Join/leave with dinosaur, gender, growth\n"
                   "• **Chat Messages** - Global, Admin, Spatial, Logging channels\n"
                   "• **Death/Kill Feed** - Victim & killer with growth, gender, Prime status\n"
@@ -1706,6 +1966,45 @@ class ServerLogsCommands(commands.GroupCog, name="sftplogs"):
             inline=False
         )
 
+        # Show individual commands if available
+        if visible:
+            # Group commands by category
+            categories = {
+                "Setup & Configuration": [
+                    'logs_setup', 'logs_setpath', 'logs_setchannel'
+                ],
+                "Monitoring Control": [
+                    'logs_start', 'logs_stop', 'logs_status'
+                ],
+                "File Operations": [
+                    'logs_test', 'logs_readfile', 'logs_browse'
+                ]
+            }
+
+            embed.add_field(
+                name="📋 Individual Commands",
+                value="*You can also use individual slash commands:*",
+                inline=False
+            )
+
+            for category_name, category_commands in categories.items():
+                visible_in_category = [cmd for cmd in category_commands if cmd in visible]
+                if visible_in_category:
+                    cmd_lines = []
+                    for cmd in visible_in_category:
+                        # Remove 'logs_' prefix for display
+                        display_name = cmd.replace('logs_', '')
+                        desc = COMMAND_DESCRIPTIONS.get(cmd, '')
+                        # Remove [Premium] prefix from description
+                        desc = desc.replace('[Premium] ', '')
+                        cmd_lines.append(f"`/sftplogs {display_name}` - {desc}")
+
+                    embed.add_field(
+                        name=f"　├ {category_name}",
+                        value="\n".join(cmd_lines),
+                        inline=False
+                    )
+
         embed.add_field(
             name="⚠️ Game Support",
             value="Log parsing is currently exclusive to **The Isle Evrima**.\n"
@@ -1713,7 +2012,14 @@ class ServerLogsCommands(commands.GroupCog, name="sftplogs"):
             inline=False
         )
 
-        embed.set_footer(text=f"You have access to {len(visible)} log monitoring commands | The Isle Evrima only")
+        total_msg = []
+        if has_panel_access:
+            total_msg.append("Panel access: ✅")
+        if visible:
+            total_msg.append(f"{len(visible)} individual commands")
+        total_msg.append("The Isle Evrima only")
+
+        embed.set_footer(text=" | ".join(total_msg))
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -2108,6 +2414,1767 @@ class ServerLogsCommands(commands.GroupCog, name="sftplogs"):
                     logger.warning(f"Cannot send to channel {channel_id} - missing permissions")
                 except Exception as e:
                     logger.error(f"Error sending to channel: {e}")
+
+    # Helper methods for menu dropdown callbacks
+    async def _menu_setup(self, interaction: discord.Interaction):
+        """Handle setup command from menu."""
+        if not await require_permission(interaction, 'logs_setup'):
+            return
+
+        # Show game type selection view
+        class GameTypeSelect(discord.ui.Select):
+            def __init__(self):
+                options = [
+                    discord.SelectOption(label="The Isle Evrima", value="the_isle_evrima", emoji="🦖"),
+                    discord.SelectOption(label="Path of Titans", value="path_of_titans", emoji="🦕"),
+                ]
+                super().__init__(placeholder="Select game type", options=options)
+
+            async def callback(self, select_interaction: discord.Interaction):
+                game_type = self.values[0]
+                game_display = "The Isle Evrima" if game_type == "the_isle_evrima" else "Path of Titans"
+
+                # Open the SFTP setup modal
+                modal = SFTPSetupModal(game_type, game_display)
+                await select_interaction.response.send_modal(modal)
+
+        view = discord.ui.View(timeout=60)
+        view.add_item(GameTypeSelect())
+
+        embed = discord.Embed(
+            title="Configure SFTP Connection",
+            description="Select the game type to configure SFTP monitoring for:",
+            color=discord.Color.blue()
+        )
+
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    async def _menu_setpath(self, interaction: discord.Interaction):
+        """Handle setpath command from menu."""
+        if not await require_permission(interaction, 'logs_setup'):
+            return
+
+        configs = SFTPConfigQueries.get_active_configs(interaction.guild_id)
+
+        if not configs:
+            await interaction.response.send_message(
+                "❌ No SFTP configurations found. Use `/sftplogs setup` first.",
+                ephemeral=True
+            )
+            return
+
+        # Create config selection dropdown
+        options = [
+            discord.SelectOption(label=c['config_name'], value=c['config_name'])
+            for c in configs[:25]  # Max 25 options
+        ]
+
+        cog_ref = self
+
+        class ConfigSelect(discord.ui.Select):
+            def __init__(self):
+                super().__init__(placeholder="Select SFTP configuration", options=options)
+
+            async def callback(self, select_interaction: discord.Interaction):
+                config_name = self.values[0]
+
+                # Open path input modal
+                class SetPathModal(discord.ui.Modal, title="Set Log File Path"):
+                    path = discord.ui.TextInput(
+                        label="Log File Path",
+                        placeholder="e.g., /home/container/TheIsle/Saved/Logs/TheIsle.log",
+                        required=True,
+                        max_length=500,
+                        style=discord.TextStyle.paragraph
+                    )
+
+                    async def on_submit(self, modal_interaction: discord.Interaction):
+                        path = self.path.value.strip()
+
+                        try:
+                            configs = SFTPConfigQueries.get_active_configs(modal_interaction.guild_id)
+                            sftp_config = next((c for c in configs if c['config_name'] == config_name), None)
+
+                            if not sftp_config:
+                                await modal_interaction.response.send_message(
+                                    f"❌ Configuration `{config_name}` not found.",
+                                    ephemeral=True
+                                )
+                                return
+
+                            game_type = sftp_config.get('game_type', 'the_isle_evrima')
+
+                            from database.connection import get_cursor
+                            with get_cursor() as cursor:
+                                if game_type == 'the_isle_evrima':
+                                    # The Isle uses ONE unified log file for everything
+                                    cursor.execute(
+                                        """UPDATE server_sftp_config
+                                           SET chat_log_path = %s,
+                                               kill_log_path = %s,
+                                               admin_log_path = %s
+                                           WHERE id = %s""",
+                                        (path, path, path, sftp_config['id'])
+                                    )
+                                    message = f"✅ Set unified log path to:\n`{path}`\n\nAll log types (chat, kills, admin) will be read from this single file."
+                                else:
+                                    cursor.execute(
+                                        "UPDATE server_sftp_config SET chat_log_path = %s WHERE id = %s",
+                                        (path, sftp_config['id'])
+                                    )
+                                    message = f"✅ Set chat log path to `{path}`"
+
+                            # Check if we can auto-start monitoring
+                            channels = LogChannelQueries.get_channels(modal_interaction.guild_id)
+                            has_channels = any([
+                                channels.get('player_login_channel_id'),
+                                channels.get('player_logout_channel_id'),
+                                channels.get('player_chat_channel_id'),
+                                channels.get('admin_command_channel_id'),
+                                channels.get('player_death_channel_id'),
+                                channels.get('chatlog_channel_id'),
+                                channels.get('killfeed_channel_id'),
+                                channels.get('adminlog_channel_id')
+                            ]) if channels else False
+
+                            # Auto-start if not already running
+                            if has_channels and modal_interaction.guild_id not in cog_ref._active_monitors:
+                                try:
+                                    from services.sftp_logs import log_monitor_manager, LogType
+
+                                    monitor = log_monitor_manager.create_monitor(
+                                        sftp_config['id'],
+                                        host=sftp_config['host'],
+                                        port=sftp_config['port'],
+                                        username=sftp_config['username'],
+                                        password=sftp_config['password'],
+                                        game_type=sftp_config['game_type'],
+                                        unified_mode=True,
+                                        server_name=sftp_config.get('config_name', 'Unknown Server')
+                                    )
+
+                                    if sftp_config['game_type'] == 'the_isle_evrima':
+                                        state = LogMonitorStateQueries.get_state(sftp_config['id'], 'admin')
+                                        monitor.add_file(
+                                            path,
+                                            LogType.ADMIN,
+                                            initial_position=state['last_position'] if state else 0,
+                                            initial_hash=state['last_line_hash'] if state else ""
+                                        )
+
+                                    monitor.on_log(LogType.CHAT, lambda e: cog_ref._queue_log_entry(
+                                        modal_interaction.guild_id, sftp_config['id'], e
+                                    ))
+                                    monitor.on_log(LogType.KILL, lambda e: cog_ref._queue_log_entry(
+                                        modal_interaction.guild_id, sftp_config['id'], e
+                                    ))
+                                    monitor.on_log(LogType.ADMIN, lambda e: cog_ref._queue_log_entry(
+                                        modal_interaction.guild_id, sftp_config['id'], e
+                                    ))
+
+                                    settings = GuildRCONSettingsQueries.get_or_create_settings(modal_interaction.guild_id)
+                                    poll_interval = settings.get('log_poll_interval_seconds', 30)
+
+                                    await monitor.start(poll_interval)
+                                    cog_ref._active_monitors[modal_interaction.guild_id] = sftp_config['id']
+
+                                    await cog_ref._load_game_ini_admins(modal_interaction.guild_id, sftp_config)
+
+                                    message += "\n\n✅ **Auto-started log monitoring!**\nLogs will now appear in your configured channels."
+                                except Exception as e:
+                                    logger.error(f"Failed to auto-start monitoring: {e}", exc_info=True)
+                                    message += "\n\n💡 **Tip:** Use **Monitoring → Start Monitoring** to begin monitoring."
+                            elif has_channels:
+                                message += "\n\n💡 **Monitoring already active.**"
+                            else:
+                                message += "\n\n💡 **Tip:** Set channels with **Setup & Configuration → Set Channels**, then monitoring will auto-start!"
+
+                            await modal_interaction.response.send_message(message, ephemeral=True)
+
+                        except Exception as e:
+                            logger.error(f"Error setting log path: {e}", exc_info=True)
+                            await modal_interaction.response.send_message(
+                                f"An error occurred: {e}",
+                                ephemeral=True
+                            )
+
+                modal = SetPathModal()
+                await select_interaction.response.send_modal(modal)
+
+        view = discord.ui.View(timeout=60)
+        view.add_item(ConfigSelect())
+
+        embed = discord.Embed(
+            title="Set Log File Path",
+            description="Select an SFTP configuration to set the log file path:",
+            color=discord.Color.blue()
+        )
+
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    async def _menu_setchannel(self, interaction: discord.Interaction):
+        """Handle setchannel command from menu."""
+        if not await require_permission(interaction, 'logs_setchannel'):
+            return
+
+        # Get current channel configuration
+        channels = LogChannelQueries.get_channels(interaction.guild_id)
+
+        # Create view with channel dropdowns
+        view = SetChannelsView(interaction.guild, channels)
+
+        # Create embed with instructions
+        embed = discord.Embed(
+            title="📋 Configure Log Channels",
+            description=(
+                "Select the channel where you want each log type to go.\n"
+                "**Changes save instantly when you select from the dropdowns!**\n\n"
+                "**Available Log Types:**\n"
+                "🟢🔴 **Player Login & Logout** - When players join and leave the server\n"
+                "💬 **Player Chat** - Chat messages (Global, Admin, Spatial, etc.)\n"
+                "⚡ **Admin Command** - In-game admin commands\n"
+                "☠️ **Player Death** - Kill feed events\n"
+                "🤖 **RCON Command** - Commands executed via Discord RCON\n\n"
+                "💡 **Tip:** You can use the same channel for multiple log types!"
+            ),
+            color=discord.Color.blue()
+        )
+
+        if channels:
+            current_config = []
+
+            # Check if login and logout are set to the same channel
+            login_ch_id = channels.get('player_login_channel_id')
+            logout_ch_id = channels.get('player_logout_channel_id')
+
+            if login_ch_id and logout_ch_id and login_ch_id == logout_ch_id:
+                # Show combined entry
+                channel = interaction.guild.get_channel(login_ch_id)
+                if channel:
+                    current_config.append(f"**[1]** 🟢🔴 Player Login & Logout: {channel.mention}")
+            else:
+                # Show separate entries if different or only one is set
+                if login_ch_id:
+                    channel = interaction.guild.get_channel(login_ch_id)
+                    if channel:
+                        current_config.append(f"**[1]** 🟢 Player Login: {channel.mention}")
+                if logout_ch_id:
+                    channel = interaction.guild.get_channel(logout_ch_id)
+                    if channel:
+                        current_config.append(f"**[1]** 🔴 Player Logout: {channel.mention}")
+
+            # Player Chat
+            chat_ch_id = channels.get('player_chat_channel_id')
+            if chat_ch_id:
+                channel = interaction.guild.get_channel(chat_ch_id)
+                if channel:
+                    current_config.append(f"**[2]** 💬 Player Chat: {channel.mention}")
+
+            # Check if admin command and RCON command are set to the same channel
+            admin_ch_id = channels.get('admin_command_channel_id')
+            rcon_ch_id = channels.get('rcon_command_channel_id')
+
+            if admin_ch_id and rcon_ch_id and admin_ch_id == rcon_ch_id:
+                # Show combined entry
+                channel = interaction.guild.get_channel(admin_ch_id)
+                if channel:
+                    current_config.append(f"**[3 & 5]** ⚡🤖 Admin Command & RCON Command: {channel.mention}")
+            else:
+                # Show separate entries if different or only one is set
+                if admin_ch_id:
+                    channel = interaction.guild.get_channel(admin_ch_id)
+                    if channel:
+                        current_config.append(f"**[3]** ⚡ Admin Command: {channel.mention}")
+
+            # Player Death
+            death_ch_id = channels.get('player_death_channel_id')
+            if death_ch_id:
+                channel = interaction.guild.get_channel(death_ch_id)
+                if channel:
+                    current_config.append(f"**[4]** ☠️ Player Death: {channel.mention}")
+
+            # RCON Command (show separately if not combined with Admin Command above)
+            if not (admin_ch_id and rcon_ch_id and admin_ch_id == rcon_ch_id):
+                if rcon_ch_id:
+                    channel = interaction.guild.get_channel(rcon_ch_id)
+                    if channel:
+                        current_config.append(f"**[5]** 🤖 RCON Command: {channel.mention}")
+
+            if current_config:
+                embed.add_field(
+                    name="📌 Current Configuration",
+                    value="\n".join(current_config),
+                    inline=False
+                )
+
+        embed.set_footer(text="Select the channel with the dropdown that corresponds to the number • Dismiss when done")
+
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    async def _menu_start(self, interaction: discord.Interaction):
+        """Handle start command from menu."""
+        if not await require_permission(interaction, 'logs_start'):
+            return
+
+        configs = SFTPConfigQueries.get_active_configs(interaction.guild_id)
+
+        if not configs:
+            await interaction.response.send_message(
+                "❌ No SFTP configurations found. Use `/sftplogs setup` first.",
+                ephemeral=True
+            )
+            return
+
+        # Create config selection dropdown
+        options = [
+            discord.SelectOption(label=c['config_name'], value=str(c['id']))
+            for c in configs[:25]  # Max 25 options
+        ]
+
+        cog_ref = self
+
+        class ConfigSelect(discord.ui.Select):
+            def __init__(self):
+                super().__init__(placeholder="Select configuration to start monitoring", options=options)
+
+            async def callback(self, select_interaction: discord.Interaction):
+                await select_interaction.response.defer(ephemeral=True)
+                config_id = int(self.values[0])
+
+                try:
+                    configs = SFTPConfigQueries.get_active_configs(select_interaction.guild_id)
+                    sftp_config = next((c for c in configs if c['id'] == config_id), None)
+
+                    if not sftp_config:
+                        await select_interaction.followup.send(
+                            "Configuration not found.",
+                            ephemeral=True
+                        )
+                        return
+
+                    # Check if already monitoring
+                    if sftp_config['id'] in cog_ref._active_monitors.values():
+                        await select_interaction.followup.send(
+                            f"Already monitoring `{sftp_config['config_name']}`.",
+                            ephemeral=True
+                        )
+                        return
+
+                    # Check channel configuration
+                    channels = LogChannelQueries.get_channels(select_interaction.guild_id)
+                    if not channels:
+                        await select_interaction.followup.send(
+                            "No log channels configured. Use **Setup & Configuration → Set Channels** first.",
+                            ephemeral=True
+                        )
+                        return
+
+                    # Create and start monitor
+                    game_type = GameLogType(sftp_config.get('game_type', 'the_isle_evrima'))
+
+                    chat_path = sftp_config.get('chat_log_path')
+                    kill_path = sftp_config.get('kill_log_path')
+                    admin_path = sftp_config.get('admin_log_path')
+
+                    unified_mode = (chat_path and chat_path == kill_path == admin_path)
+
+                    monitor = log_monitor_manager.create_monitor(
+                        config_id=sftp_config['id'],
+                        host=sftp_config['host'],
+                        port=sftp_config['port'],
+                        username=sftp_config['username'],
+                        password=sftp_config['password'],
+                        game_type=game_type,
+                        unified_mode=unified_mode,
+                        server_name=sftp_config.get('config_name', 'Unknown Server')
+                    )
+
+                    # Add log files to monitor
+                    if unified_mode and chat_path:
+                        state = LogMonitorStateQueries.get_state(sftp_config['id'], 'chat')
+                        monitor.add_file(
+                            chat_path,
+                            log_type=None,
+                            initial_position=state['last_position'] if state else 0,
+                            initial_hash=state['last_line_hash'] if state else ""
+                        )
+                    else:
+                        if chat_path:
+                            state = LogMonitorStateQueries.get_state(sftp_config['id'], 'chat')
+                            monitor.add_file(
+                                chat_path,
+                                LogType.CHAT,
+                                initial_position=state['last_position'] if state else 0,
+                                initial_hash=state['last_line_hash'] if state else ""
+                            )
+
+                        if kill_path and kill_path != chat_path:
+                            state = LogMonitorStateQueries.get_state(sftp_config['id'], 'kill')
+                            monitor.add_file(
+                                kill_path,
+                                LogType.KILL,
+                                initial_position=state['last_position'] if state else 0,
+                                initial_hash=state['last_line_hash'] if state else ""
+                            )
+
+                        if admin_path and admin_path != chat_path and admin_path != kill_path:
+                            state = LogMonitorStateQueries.get_state(sftp_config['id'], 'admin')
+                            monitor.add_file(
+                                admin_path,
+                                LogType.ADMIN,
+                                initial_position=state['last_position'] if state else 0,
+                                initial_hash=state['last_line_hash'] if state else ""
+                            )
+
+                    # Register callbacks
+                    monitor.on_log(LogType.CHAT, lambda e: cog_ref._queue_log_entry(
+                        select_interaction.guild_id, sftp_config['id'], e
+                    ))
+                    monitor.on_log(LogType.KILL, lambda e: cog_ref._queue_log_entry(
+                        select_interaction.guild_id, sftp_config['id'], e
+                    ))
+                    monitor.on_log(LogType.ADMIN, lambda e: cog_ref._queue_log_entry(
+                        select_interaction.guild_id, sftp_config['id'], e
+                    ))
+
+                    # Get poll interval
+                    settings = GuildRCONSettingsQueries.get_or_create_settings(select_interaction.guild_id)
+                    poll_interval = settings.get('log_poll_interval_seconds', 30)
+
+                    await monitor.start(poll_interval)
+                    cog_ref._active_monitors[select_interaction.guild_id] = sftp_config['id']
+
+                    # Load Game.ini admin list
+                    await cog_ref._load_game_ini_admins(select_interaction.guild_id, sftp_config)
+
+                    # Build success message
+                    mode_info = "unified log file" if unified_mode else "separate log files"
+                    log_path_display = chat_path if unified_mode else f"{len([p for p in [chat_path, kill_path, admin_path] if p])} files"
+
+                    embed = discord.Embed(
+                        title="✅ Log Monitoring Started",
+                        description=f"Now monitoring **{sftp_config['config_name']}** ({mode_info})",
+                        color=discord.Color.green()
+                    )
+                    embed.add_field(name="Log File", value=f"`{log_path_display}`", inline=False)
+                    embed.add_field(name="Poll Interval", value=f"{poll_interval} seconds", inline=True)
+                    embed.add_field(name="Mode", value="Unified" if unified_mode else "Multi-file", inline=True)
+                    embed.set_footer(text="Logs will appear in your configured channels")
+
+                    await select_interaction.followup.send(embed=embed, ephemeral=True)
+
+                except Exception as e:
+                    logger.error(f"Error starting monitoring: {e}", exc_info=True)
+                    await select_interaction.followup.send(
+                        f"An error occurred: {e}",
+                        ephemeral=True
+                    )
+
+        view = discord.ui.View(timeout=60)
+        view.add_item(ConfigSelect())
+
+        embed = discord.Embed(
+            title="Start Log Monitoring",
+            description="Select an SFTP configuration to start monitoring:",
+            color=discord.Color.green()
+        )
+
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    async def _menu_stop(self, interaction: discord.Interaction):
+        """Handle stop command from menu."""
+        if not await require_permission(interaction, 'logs_stop'):
+            return
+
+        try:
+            config_id = self._active_monitors.get(interaction.guild_id)
+
+            if not config_id:
+                await interaction.response.send_message(
+                    "No active monitoring for this server.",
+                    ephemeral=True
+                )
+                return
+
+            await log_monitor_manager.remove_monitor(config_id)
+            del self._active_monitors[interaction.guild_id]
+
+            await interaction.response.send_message(
+                "Log monitoring stopped.",
+                ephemeral=True
+            )
+
+        except Exception as e:
+            logger.error(f"Error stopping monitoring: {e}", exc_info=True)
+            await interaction.response.send_message(
+                f"An error occurred: {e}",
+                ephemeral=True
+            )
+
+    async def _menu_status(self, interaction: discord.Interaction):
+        """Handle status command from menu."""
+        if not await require_permission(interaction, 'logs_status'):
+            return
+
+        try:
+            config_id = self._active_monitors.get(interaction.guild_id)
+            configs = SFTPConfigQueries.get_active_configs(interaction.guild_id)
+            channels = LogChannelQueries.get_channels(interaction.guild_id)
+
+            embed = discord.Embed(
+                title="Log Monitoring Status",
+                color=discord.Color.blue()
+            )
+
+            # Monitoring status
+            if config_id:
+                config = next((c for c in configs if c['id'] == config_id), None)
+                config_name = config['config_name'] if config else "Unknown"
+                embed.add_field(
+                    name="Status",
+                    value=f"🟢 Active - Monitoring `{config_name}`",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="Status",
+                    value="🔴 Inactive",
+                    inline=False
+                )
+
+            # Configured channels
+            if channels:
+                channel_list = []
+                if channels.get('chatlog_channel_id'):
+                    channel_list.append(f"**Chat:** <#{channels['chatlog_channel_id']}>")
+                if channels.get('killfeed_channel_id'):
+                    channel_list.append(f"**Kills:** <#{channels['killfeed_channel_id']}>")
+                if channels.get('adminlog_channel_id'):
+                    channel_list.append(f"**Admin:** <#{channels['adminlog_channel_id']}>")
+
+                if channel_list:
+                    embed.add_field(
+                        name="Channels",
+                        value="\n".join(channel_list),
+                        inline=False
+                    )
+            else:
+                embed.add_field(
+                    name="Channels",
+                    value="No channels configured",
+                    inline=False
+                )
+
+            # SFTP configurations
+            if configs:
+                config_list = []
+                for c in configs:
+                    paths = []
+                    if c.get('chat_log_path'):
+                        paths.append("chat")
+                    if c.get('kill_log_path'):
+                        paths.append("kill")
+                    if c.get('admin_log_path'):
+                        paths.append("admin")
+                    path_str = ", ".join(paths) if paths else "no paths"
+                    config_list.append(f"• **{c['config_name']}** ({path_str})")
+
+                embed.add_field(
+                    name="SFTP Configurations",
+                    value="\n".join(config_list),
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="SFTP Configurations",
+                    value="None configured",
+                    inline=False
+                )
+
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        except Exception as e:
+            logger.error(f"Error getting status: {e}", exc_info=True)
+            await interaction.response.send_message(
+                f"An error occurred: {e}",
+                ephemeral=True
+            )
+
+    async def _menu_browse(self, interaction: discord.Interaction):
+        """Handle browse command from menu."""
+        if not await require_permission(interaction, 'logs_setup'):
+            return
+
+        configs = SFTPConfigQueries.get_active_configs(interaction.guild_id)
+
+        if not configs:
+            await interaction.response.send_message(
+                "❌ No SFTP configurations found. Use `/sftplogs setup` first.",
+                ephemeral=True
+            )
+            return
+
+        # Create config selection dropdown
+        options = [
+            discord.SelectOption(label=c['config_name'], value=c['config_name'])
+            for c in configs[:25]  # Max 25 options
+        ]
+
+        cog_ref = self
+
+        class ConfigSelect(discord.ui.Select):
+            def __init__(self):
+                super().__init__(placeholder="Select SFTP configuration to browse", options=options)
+
+            async def callback(self, select_interaction: discord.Interaction):
+                config_name = self.values[0]
+
+                # Open path input modal
+                class BrowsePathModal(discord.ui.Modal, title="Browse Directory"):
+                    path_input = discord.ui.TextInput(
+                        label="Directory Path (leave blank for root)",
+                        placeholder="e.g., TheIsle/Saved/Logs or use shortcuts: logs, saved, root",
+                        required=False,
+                        max_length=500
+                    )
+
+                    async def on_submit(self, modal_interaction: discord.Interaction):
+                        path = self.path_input.value.strip() if self.path_input.value else None
+                        await modal_interaction.response.defer(ephemeral=True)
+
+                        try:
+                            import asyncio
+                            from datetime import datetime
+                            configs = SFTPConfigQueries.get_active_configs(modal_interaction.guild_id)
+                            sftp_config = next((c for c in configs if c['config_name'] == config_name), None)
+
+                            if not sftp_config:
+                                await modal_interaction.followup.send(f"❌ Configuration `{config_name}` not found.", ephemeral=True)
+                                return
+
+                            # Handle shortcuts
+                            if path:
+                                path = path.strip()
+                                if path.lower() == 'logs':
+                                    path = 'TheIsle/Saved/Logs'
+                                elif path.lower() == 'saved':
+                                    path = 'TheIsle/Saved'
+                                elif path.lower() == 'root':
+                                    path = '.'
+
+                            game_type = GameLogType(sftp_config.get('game_type', 'the_isle_evrima'))
+                            reader = SFTPLogReader(
+                                sftp_config['host'],
+                                sftp_config['port'],
+                                sftp_config['username'],
+                                sftp_config['password'],
+                                game_type
+                            )
+
+                            await reader.connect()
+                            browse_path = path if path else '.'
+
+                            def _list_directory():
+                                try:
+                                    import stat
+                                    items = []
+                                    for item in reader._sftp.listdir_attr(browse_path):
+                                        is_directory = stat.S_ISDIR(item.st_mode) if item.st_mode else False
+                                        is_dir = '📁' if is_directory else '📄'
+                                        size = f"{item.st_size / 1024:.1f} KB" if item.st_size else "0 KB"
+                                        mod_time = datetime.fromtimestamp(item.st_mtime).strftime('%Y-%m-%d %H:%M') if item.st_mtime else "Unknown"
+
+                                        items.append({
+                                            'name': item.filename,
+                                            'type': is_dir,
+                                            'size': size,
+                                            'modified': mod_time,
+                                            'is_dir': is_directory
+                                        })
+
+                                    items.sort(key=lambda x: (not x['is_dir'], x['name'].lower()))
+                                    return items
+                                except FileNotFoundError:
+                                    return None
+                                except PermissionError:
+                                    return 'permission_error'
+                                except Exception as e:
+                                    return f'error: {str(e)}'
+
+                            result = await asyncio.to_thread(_list_directory)
+                            await reader.disconnect()
+
+                            if result is None:
+                                await modal_interaction.followup.send(
+                                    f"❌ Directory not found: `{browse_path}`",
+                                    ephemeral=True
+                                )
+                                return
+                            elif result == 'permission_error':
+                                await modal_interaction.followup.send(
+                                    f"❌ Permission denied accessing: `{browse_path}`",
+                                    ephemeral=True
+                                )
+                                return
+                            elif isinstance(result, str) and result.startswith('error:'):
+                                await modal_interaction.followup.send(
+                                    f"❌ Error: {result[7:]}",
+                                    ephemeral=True
+                                )
+                                return
+
+                            # Get parent directory
+                            parent_path = None
+                            if browse_path and browse_path != '.' and browse_path != '/':
+                                parts = browse_path.rstrip('/').split('/')
+                                if len(parts) > 1:
+                                    parent_path = '/'.join(parts[:-1])
+                                else:
+                                    parent_path = '.'
+
+                            embed = discord.Embed(
+                                title=f"📂 SFTP Directory Browser",
+                                description=f"**Current Path:** `{browse_path}`\n**Items:** {len(result)}",
+                                color=discord.Color.blue()
+                            )
+
+                            if not result:
+                                embed.add_field(
+                                    name="Empty Directory",
+                                    value="No files or folders found",
+                                    inline=False
+                                )
+                            else:
+                                dirs = [item for item in result if item['is_dir']]
+                                files = [item for item in result if not item['is_dir']]
+
+                                if dirs:
+                                    dirs_text = []
+                                    for item in dirs[:10]:
+                                        new_path = f"{browse_path}/{item['name']}".replace('./', '').replace('//', '/')
+                                        dirs_text.append(f"📁 **{item['name']}**")
+
+                                    dirs_value = "\n".join(dirs_text)
+                                    if len(dirs) > 10:
+                                        dirs_value += f"\n...and {len(dirs) - 10} more folders"
+
+                                    embed.add_field(
+                                        name=f"📂 Folders ({len(dirs)})",
+                                        value=dirs_value,
+                                        inline=False
+                                    )
+
+                                if files:
+                                    files_text = []
+                                    for item in files[:15]:
+                                        files_text.append(f"📄 `{item['name']}` ({item['size']})")
+
+                                    files_value = "\n".join(files_text)
+                                    if len(files) > 15:
+                                        files_value += f"\n...and {len(files) - 15} more files"
+
+                                    embed.add_field(
+                                        name=f"📄 Files ({len(files)})",
+                                        value=files_value,
+                                        inline=False
+                                    )
+
+                            # Add navigation hints with numbered directories
+                            nav_text = []
+
+                            if parent_path is not None:
+                                nav_text.append(f"⬆️ **Go Up:** `{parent_path}`")
+
+                            if dirs:
+                                nav_text.append(f"\n**📁 All Folder Paths:**")
+                                for idx, item in enumerate(dirs[:15], start=1):
+                                    new_path = f"{browse_path}/{item['name']}".replace('./', '').replace('//', '/')
+                                    nav_text.append(f"[{idx}] `{new_path}`")
+
+                                if len(dirs) > 15:
+                                    nav_text.append(f"...and {len(dirs) - 15} more folders")
+
+                            nav_text.append(f"\n**🔗 Quick Shortcuts:**")
+                            nav_text.append(f"• `logs` → TheIsle/Saved/Logs")
+                            nav_text.append(f"• `saved` → TheIsle/Saved")
+                            nav_text.append(f"• `root` → Home directory")
+
+                            embed.add_field(
+                                name="🧭 Navigation",
+                                value="\n".join(nav_text),
+                                inline=False
+                            )
+
+                            # Create view with navigation buttons
+                            nav_view = discord.ui.View(timeout=300)
+
+                            # Capture config_id for file read buttons
+                            config_id = sftp_config['id']
+
+                            # Helper to rebrowse a path
+                            async def rebrowse_path(btn_interaction: discord.Interaction, target_path: str):
+                                # Security check: only users with correct permissions can interact
+                                user_permissions = get_user_allowed_commands(btn_interaction.guild_id, btn_interaction.user)
+                                if "inpanel_logs_browse" not in user_permissions:
+                                    await btn_interaction.response.send_message(
+                                        "❌ You don't have permission to interact with this browse session.",
+                                        ephemeral=True
+                                    )
+                                    return
+
+                                await btn_interaction.response.defer()
+
+                                try:
+                                    # Delete the previous message to prevent scroll doom
+                                    try:
+                                        await btn_interaction.message.delete()
+                                    except Exception as e:
+                                        logger.error(f"Failed to delete message: {e}")
+
+                                    # Handle shortcuts
+                                    if target_path.lower() == 'logs':
+                                        target_path = 'TheIsle/Saved/Logs'
+                                    elif target_path.lower() == 'saved':
+                                        target_path = 'TheIsle/Saved'
+                                    elif target_path.lower() == 'root':
+                                        target_path = '.'
+
+                                    await reader.connect()
+                                    new_browse_path = target_path if target_path else '.'
+
+                                    def _list_new_directory():
+                                        try:
+                                            import stat
+                                            items = []
+                                            for item in reader._sftp.listdir_attr(new_browse_path):
+                                                is_directory = stat.S_ISDIR(item.st_mode) if item.st_mode else False
+                                                items.append({
+                                                    'name': item.filename,
+                                                    'is_dir': is_directory,
+                                                    'size': f"{item.st_size / 1024:.1f} KB" if item.st_size else "0 KB"
+                                                })
+                                            items.sort(key=lambda x: (not x['is_dir'], x['name'].lower()))
+                                            return items
+                                        except Exception as e:
+                                            return f'error: {str(e)}'
+
+                                    new_result = await asyncio.to_thread(_list_new_directory)
+                                    await reader.disconnect()
+
+                                    if isinstance(new_result, str):
+                                        await btn_interaction.followup.send(f"❌ Error: {new_result[7:]}", ephemeral=True)
+                                        return
+
+                                    # Build new embed
+                                    new_dirs = [i for i in new_result if i['is_dir']]
+                                    new_files = [i for i in new_result if not i['is_dir']]
+
+                                    new_embed = discord.Embed(
+                                        title=f"📂 SFTP Directory Browser",
+                                        description=f"**Current Path:** `{new_browse_path}`\n**Items:** {len(new_result)}",
+                                        color=discord.Color.blue()
+                                    )
+
+                                    if new_dirs:
+                                        dirs_text = "\n".join([f"📁 **{i['name']}**" for i in new_dirs[:10]])
+                                        if len(new_dirs) > 10:
+                                            dirs_text += f"\n...and {len(new_dirs) - 10} more folders"
+                                        new_embed.add_field(name=f"📂 Folders ({len(new_dirs)})", value=dirs_text, inline=False)
+
+                                    if new_files:
+                                        files_text = "\n".join([f"📄 `{i['name']}` ({i['size']})" for i in new_files[:15]])
+                                        if len(new_files) > 15:
+                                            files_text += f"\n...and {len(new_files) - 15} more files"
+                                        new_embed.add_field(name=f"📄 Files ({len(new_files)})", value=files_text, inline=False)
+
+                                    # Show paths for copy
+                                    nav_info = []
+                                    for idx, i in enumerate(new_dirs[:10], start=1):
+                                        p = f"{new_browse_path}/{i['name']}".replace('./', '').replace('//', '/')
+                                        nav_info.append(f"[{idx}] `{p}`")
+                                    new_embed.add_field(name="📁 Paths", value="\n".join(nav_info) if nav_info else "No subdirectories", inline=False)
+
+                                    # Create navigation view with buttons for new directory
+                                    new_nav_view = discord.ui.View(timeout=300)
+
+                                    # Calculate parent path for Go Up button
+                                    new_parent_path = None
+                                    if new_browse_path and new_browse_path != '.' and new_browse_path != '/':
+                                        parts = new_browse_path.rstrip('/').split('/')
+                                        if len(parts) > 1:
+                                            new_parent_path = '/'.join(parts[:-1])
+                                        else:
+                                            new_parent_path = '.'
+
+                                    # Add "Go Up" button for new directory
+                                    if new_parent_path is not None:
+                                        class NewGoUpButton(discord.ui.Button):
+                                            def __init__(self, p_path):
+                                                self.parent = p_path
+                                                super().__init__(label="⬆️ Go Up", style=discord.ButtonStyle.secondary, row=0)
+
+                                            async def callback(self, new_btn_interaction: discord.Interaction):
+                                                await rebrowse_path(new_btn_interaction, self.parent)
+
+                                        new_nav_view.add_item(NewGoUpButton(new_parent_path))
+
+                                    # Add Close button
+                                    class NewCloseButton(discord.ui.Button):
+                                        def __init__(self):
+                                            super().__init__(label="❌ Close", style=discord.ButtonStyle.danger, row=0)
+
+                                        async def callback(self, close_interaction: discord.Interaction):
+                                            # Security check: only users with correct permissions can close
+                                            user_permissions = get_user_allowed_commands(close_interaction.guild_id, close_interaction.user)
+                                            if "inpanel_logs_browse" not in user_permissions:
+                                                await close_interaction.response.send_message(
+                                                    "❌ You don't have permission to interact with this browse session.",
+                                                    ephemeral=True
+                                                )
+                                                return
+
+                                            try:
+                                                await close_interaction.message.delete()
+                                            except:
+                                                await close_interaction.response.send_message("❌ Failed to delete message", ephemeral=True)
+
+                                    new_nav_view.add_item(NewCloseButton())
+
+                                    # Add directory buttons for new location
+                                    new_dir_count = 0
+                                    for idx, item in enumerate(new_dirs[:min(20, len(new_dirs))], start=1):
+                                        next_path = f"{new_browse_path}/{item['name']}".replace('./', '').replace('//', '/')
+
+                                        class NewDirButton(discord.ui.Button):
+                                            def __init__(self, num, name, path):
+                                                self.target_path = path
+                                                # Row 0 is reserved for Go Up and Close buttons, so start from row 1
+                                                btn_row = 1 + ((num - 1) // 5)
+                                                super().__init__(label=f"[{num}] {name[:12]}", style=discord.ButtonStyle.primary, row=btn_row)
+
+                                            async def callback(self, new_btn_interaction: discord.Interaction):
+                                                await rebrowse_path(new_btn_interaction, self.target_path)
+
+                                        new_nav_view.add_item(NewDirButton(idx, item['name'], next_path))
+                                        new_dir_count += 1
+
+                                    # Add file read buttons for new location
+                                    new_readable_files = [f for f in new_files if f['name'].lower().endswith(('.ini', '.conf', '.cfg', '.log', '.txt'))]
+
+                                    # Row 0 is reserved for navigation buttons (Go Up/Close)
+                                    # Directory buttons start at row 1, so file buttons come after them
+                                    new_file_button_start_row = 1 + ((new_dir_count + 4) // 5)
+
+                                    # Max 25 buttons total, minus navigation buttons on row 0, minus directory buttons
+                                    new_nav_buttons_count = 1 + (1 if new_parent_path is not None else 0)  # Close + optional Go Up
+                                    max_new_file_buttons = min(10, 25 - new_dir_count - new_nav_buttons_count)
+
+                                    for idx, file_item in enumerate(new_readable_files[:max_new_file_buttons], start=1):
+                                        new_file_full_path = f"{new_browse_path}/{file_item['name']}".replace('./', '').replace('//', '/')
+
+                                        class NewFileReadButton(discord.ui.Button):
+                                            def __init__(self, filename, fpath, idx_num, cfg_id):
+                                                self.file_path = fpath
+                                                self.filename = filename
+                                                self.config_id = cfg_id
+                                                btn_row = new_file_button_start_row + ((idx_num - 1) // 5)
+                                                super().__init__(
+                                                    label=f"📄 {filename[:15]}",
+                                                    style=discord.ButtonStyle.success,
+                                                    row=min(btn_row, 4)
+                                                )
+
+                                            async def callback(self, file_btn_interaction: discord.Interaction):
+                                                """Read and display the file contents."""
+                                                # Security check: only users with correct permissions can read files
+                                                user_permissions = get_user_allowed_commands(file_btn_interaction.guild_id, file_btn_interaction.user)
+                                                if "inpanel_logs_browse" not in user_permissions:
+                                                    await file_btn_interaction.response.send_message(
+                                                        "❌ You don't have permission to interact with this browse session.",
+                                                        ephemeral=True
+                                                    )
+                                                    return
+
+                                                await file_btn_interaction.response.defer(ephemeral=True)
+
+                                                try:
+                                                    import asyncio
+                                                    from datetime import datetime
+
+                                                    # Get SFTP config
+                                                    configs = SFTPConfigQueries.get_active_configs(file_btn_interaction.guild_id)
+                                                    sftp_config = next((c for c in configs if c['id'] == self.config_id), None)
+
+                                                    if not sftp_config:
+                                                        await file_btn_interaction.followup.send("❌ Configuration not found.", ephemeral=True)
+                                                        return
+
+                                                    game_type = GameLogType(sftp_config.get('game_type', 'the_isle_evrima'))
+                                                    reader = SFTPLogReader(
+                                                        sftp_config['host'],
+                                                        sftp_config['port'],
+                                                        sftp_config['username'],
+                                                        sftp_config['password'],
+                                                        game_type
+                                                    )
+
+                                                    await reader.connect()
+
+                                                    def _read_file():
+                                                        try:
+                                                            stat = reader._sftp.stat(self.file_path)
+                                                            file_size = stat.st_size
+                                                            mod_time = datetime.fromtimestamp(stat.st_mtime)
+
+                                                            file_lower = self.file_path.lower()
+                                                            is_config_file = file_lower.endswith(('.ini', '.conf', '.cfg', '.config'))
+                                                            is_log_file = file_lower.endswith(('.log', '.txt'))
+
+                                                            lines = []
+                                                            display_type = "content"
+
+                                                            if is_config_file:
+                                                                with reader._sftp.open(self.file_path, 'r') as f:
+                                                                    content = f.read()
+                                                                    if isinstance(content, bytes):
+                                                                        content = content.decode('utf-8', errors='replace')
+                                                                    lines = content.splitlines()
+                                                                display_type = "full"
+
+                                                            elif is_log_file:
+                                                                read_from = max(0, file_size - 5500)
+                                                                with reader._sftp.open(self.file_path, 'r') as f:
+                                                                    f.seek(read_from)
+                                                                    content = f.read()
+                                                                    if isinstance(content, bytes):
+                                                                        content = content.decode('utf-8', errors='replace')
+                                                                    lines = content.splitlines()[-50:]
+                                                                display_type = "last_50"
+
+                                                            else:
+                                                                read_from = max(0, file_size - 3000)
+                                                                with reader._sftp.open(self.file_path, 'r') as f:
+                                                                    f.seek(read_from)
+                                                                    content = f.read()
+                                                                    if isinstance(content, bytes):
+                                                                        content = content.decode('utf-8', errors='replace')
+                                                                    lines = content.splitlines()[-30:]
+                                                                display_type = "last_30"
+
+                                                            return {
+                                                                'success': True,
+                                                                'size': file_size,
+                                                                'modified': mod_time,
+                                                                'lines': lines,
+                                                                'display_type': display_type
+                                                            }
+                                                        except FileNotFoundError:
+                                                            return {'success': False, 'error': 'File not found'}
+                                                        except PermissionError:
+                                                            return {'success': False, 'error': 'Permission denied'}
+                                                        except Exception as e:
+                                                            return {'success': False, 'error': str(e)}
+
+                                                    result = await asyncio.to_thread(_read_file)
+                                                    await reader.disconnect()
+
+                                                    if not result['success']:
+                                                        await file_btn_interaction.followup.send(
+                                                            f"❌ Failed to read file: {result['error']}\nPath: `{self.file_path}`",
+                                                            ephemeral=True
+                                                        )
+                                                        return
+
+                                                    size_kb = result['size'] / 1024
+                                                    display_type = result.get('display_type', 'last_30')
+                                                    lines = result['lines']
+
+                                                    display_titles = {
+                                                        'full': 'Full File Contents',
+                                                        'last_50': 'Last 50 Lines',
+                                                        'last_30': 'Last 30 Lines'
+                                                    }
+                                                    field_title = display_titles.get(display_type, 'File Contents')
+
+                                                    # Smart display: if small enough, show in description; otherwise chunk
+                                                    content_text = '\n'.join(lines)
+
+                                                    # Try to fit in description first (cleaner for small files)
+                                                    if len(content_text) <= 3900:
+                                                        file_embed = discord.Embed(
+                                                            title=f"📄 {self.filename}",
+                                                            description=f"**Path:** `{self.file_path}`\n**Size:** {size_kb:.2f} KB\n**Modified:** {result['modified'].strftime('%Y-%m-%d %H:%M:%S')}\n\n```\n{content_text}\n```",
+                                                            color=discord.Color.green()
+                                                        )
+                                                    else:
+                                                        # Too large for description, use chunked fields
+                                                        file_embed = discord.Embed(
+                                                            title=f"📄 {self.filename}",
+                                                            description=f"**Path:** `{self.file_path}`\n**Size:** {size_kb:.2f} KB\n**Modified:** {result['modified'].strftime('%Y-%m-%d %H:%M:%S')}",
+                                                            color=discord.Color.green()
+                                                        )
+
+                                                        max_chunk_size = 1016
+                                                        chunks = []
+                                                        current_chunk = []
+                                                        current_size = 0
+
+                                                        for line in lines:
+                                                            line_with_newline = line + '\n'
+                                                            if current_size + len(line_with_newline) > max_chunk_size:
+                                                                if current_chunk:
+                                                                    chunks.append(''.join(current_chunk).rstrip('\n'))
+                                                                current_chunk = [line_with_newline]
+                                                                current_size = len(line_with_newline)
+                                                            else:
+                                                                current_chunk.append(line_with_newline)
+                                                                current_size += len(line_with_newline)
+
+                                                        if current_chunk:
+                                                            chunks.append(''.join(current_chunk).rstrip('\n'))
+
+                                                        for i, chunk in enumerate(chunks[:10], 1):
+                                                            file_embed.add_field(
+                                                                name=f"{field_title} (Part {i}/{min(len(chunks), 10)})",
+                                                                value=f"```\n{chunk}\n```",
+                                                                inline=False
+                                                            )
+
+                                                    await file_btn_interaction.followup.send(embed=file_embed, ephemeral=True)
+
+                                                except Exception as e:
+                                                    logger.error(f"Error reading file: {e}", exc_info=True)
+                                                    await file_btn_interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+                                        new_nav_view.add_item(NewFileReadButton(file_item['name'], new_file_full_path, idx, config_id))
+
+                                    await btn_interaction.followup.send(embed=new_embed, view=new_nav_view, ephemeral=False)
+
+                                except Exception as e:
+                                    logger.error(f"Error rebrowsing: {e}", exc_info=True)
+                                    await btn_interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+                            # Add "Go Up" button
+                            if parent_path is not None:
+                                class GoUpButton(discord.ui.Button):
+                                    def __init__(self, p_path):
+                                        self.parent = p_path
+                                        super().__init__(label="⬆️ Go Up", style=discord.ButtonStyle.secondary, row=0)
+
+                                    async def callback(self, btn_interaction: discord.Interaction):
+                                        await rebrowse_path(btn_interaction, self.parent)
+
+                                nav_view.add_item(GoUpButton(parent_path))
+
+                            # Add Close button
+                            class CloseButton(discord.ui.Button):
+                                def __init__(self):
+                                    super().__init__(label="❌ Close", style=discord.ButtonStyle.danger, row=0)
+
+                                async def callback(self, close_interaction: discord.Interaction):
+                                    # Security check: only users with correct permissions can close
+                                    user_permissions = get_user_allowed_commands(close_interaction.guild_id, close_interaction.user)
+                                    if "inpanel_logs_browse" not in user_permissions:
+                                        await close_interaction.response.send_message(
+                                            "❌ You don't have permission to interact with this browse session.",
+                                            ephemeral=True
+                                        )
+                                        return
+
+                                    try:
+                                        await close_interaction.message.delete()
+                                    except:
+                                        await close_interaction.response.send_message("❌ Failed to delete message", ephemeral=True)
+
+                            nav_view.add_item(CloseButton())
+
+                            # Add directory buttons (up to 24 total, 5 per row)
+                            dir_count = 0
+                            for idx, item in enumerate(dirs[:min(20, len(dirs))], start=1):
+                                new_path = f"{browse_path}/{item['name']}".replace('./', '').replace('//', '/')
+
+                                class DirButton(discord.ui.Button):
+                                    def __init__(self, num, name, path):
+                                        self.target_path = path
+                                        # Row 0 is reserved for Go Up and Close buttons, so start from row 1
+                                        btn_row = 1 + ((num - 1) // 5)
+                                        super().__init__(label=f"[{num}] {name[:12]}", style=discord.ButtonStyle.primary, row=btn_row)
+
+                                    async def callback(self, btn_interaction: discord.Interaction):
+                                        await rebrowse_path(btn_interaction, self.target_path)
+
+                                nav_view.add_item(DirButton(idx, item['name'], new_path))
+                                dir_count += 1
+
+                            # Add file read buttons for readable files
+                            readable_files = [f for f in files if f['name'].lower().endswith(('.ini', '.conf', '.cfg', '.log', '.txt'))]
+
+                            # Row 0 is reserved for navigation buttons (Go Up/Close)
+                            # Directory buttons start at row 1, so file buttons come after them
+                            file_button_start_row = 1 + ((dir_count + 4) // 5)
+
+                            # Max 25 buttons total, minus navigation buttons on row 0, minus directory buttons
+                            nav_buttons_count = 1 + (1 if parent_path is not None else 0)  # Close + optional Go Up
+                            max_file_buttons = min(10, 25 - dir_count - nav_buttons_count)
+
+                            for idx, file_item in enumerate(readable_files[:max_file_buttons], start=1):
+                                file_full_path = f"{browse_path}/{file_item['name']}".replace('./', '').replace('//', '/')
+
+                                class FileReadButton(discord.ui.Button):
+                                    def __init__(self, filename, fpath, idx_num, cfg_id):
+                                        self.file_path = fpath
+                                        self.filename = filename
+                                        self.config_id = cfg_id
+                                        btn_row = file_button_start_row + ((idx_num - 1) // 5)
+                                        super().__init__(
+                                            label=f"📄 {filename[:15]}",
+                                            style=discord.ButtonStyle.success,
+                                            row=min(btn_row, 4)  # Cap at row 4
+                                        )
+
+                                    async def callback(self, file_btn_interaction: discord.Interaction):
+                                        """Read and display the file contents."""
+                                        # Security check: only users with correct permissions can read files
+                                        user_permissions = get_user_allowed_commands(file_btn_interaction.guild_id, file_btn_interaction.user)
+                                        if "inpanel_logs_browse" not in user_permissions:
+                                            await file_btn_interaction.response.send_message(
+                                                "❌ You don't have permission to interact with this browse session.",
+                                                ephemeral=True
+                                            )
+                                            return
+
+                                        await file_btn_interaction.response.defer(ephemeral=True)
+
+                                        try:
+                                            import asyncio
+                                            from datetime import datetime
+
+                                            # Get SFTP config
+                                            configs = SFTPConfigQueries.get_active_configs(file_btn_interaction.guild_id)
+                                            sftp_config = next((c for c in configs if c['id'] == self.config_id), None)
+
+                                            if not sftp_config:
+                                                await file_btn_interaction.followup.send("❌ Configuration not found.", ephemeral=True)
+                                                return
+
+                                            game_type = GameLogType(sftp_config.get('game_type', 'the_isle_evrima'))
+                                            reader = SFTPLogReader(
+                                                sftp_config['host'],
+                                                sftp_config['port'],
+                                                sftp_config['username'],
+                                                sftp_config['password'],
+                                                game_type
+                                            )
+
+                                            await reader.connect()
+
+                                            def _read_file():
+                                                try:
+                                                    stat = reader._sftp.stat(self.file_path)
+                                                    file_size = stat.st_size
+                                                    mod_time = datetime.fromtimestamp(stat.st_mtime)
+
+                                                    file_lower = self.file_path.lower()
+                                                    is_config_file = file_lower.endswith(('.ini', '.conf', '.cfg', '.config'))
+                                                    is_log_file = file_lower.endswith(('.log', '.txt'))
+
+                                                    lines = []
+                                                    display_type = "content"
+
+                                                    if is_config_file:
+                                                        with reader._sftp.open(self.file_path, 'r') as f:
+                                                            content = f.read()
+                                                            if isinstance(content, bytes):
+                                                                content = content.decode('utf-8', errors='replace')
+                                                            lines = content.splitlines()
+                                                        display_type = "full"
+
+                                                    elif is_log_file:
+                                                        read_from = max(0, file_size - 5500)
+                                                        with reader._sftp.open(self.file_path, 'r') as f:
+                                                            f.seek(read_from)
+                                                            content = f.read()
+                                                            if isinstance(content, bytes):
+                                                                content = content.decode('utf-8', errors='replace')
+                                                            lines = content.splitlines()[-50:]
+                                                        display_type = "last_50"
+
+                                                    else:
+                                                        read_from = max(0, file_size - 3000)
+                                                        with reader._sftp.open(self.file_path, 'r') as f:
+                                                            f.seek(read_from)
+                                                            content = f.read()
+                                                            if isinstance(content, bytes):
+                                                                content = content.decode('utf-8', errors='replace')
+                                                            lines = content.splitlines()[-30:]
+                                                        display_type = "last_30"
+
+                                                    return {
+                                                        'success': True,
+                                                        'size': file_size,
+                                                        'modified': mod_time,
+                                                        'lines': lines,
+                                                        'display_type': display_type
+                                                    }
+                                                except FileNotFoundError:
+                                                    return {'success': False, 'error': 'File not found'}
+                                                except PermissionError:
+                                                    return {'success': False, 'error': 'Permission denied'}
+                                                except Exception as e:
+                                                    return {'success': False, 'error': str(e)}
+
+                                            result = await asyncio.to_thread(_read_file)
+                                            await reader.disconnect()
+
+                                            if not result['success']:
+                                                await file_btn_interaction.followup.send(
+                                                    f"❌ Failed to read file: {result['error']}\nPath: `{self.file_path}`",
+                                                    ephemeral=True
+                                                )
+                                                return
+
+                                            size_kb = result['size'] / 1024
+                                            display_type = result.get('display_type', 'last_30')
+                                            lines = result['lines']
+
+                                            display_titles = {
+                                                'full': 'Full File Contents',
+                                                'last_50': 'Last 50 Lines',
+                                                'last_30': 'Last 30 Lines'
+                                            }
+                                            field_title = display_titles.get(display_type, 'File Contents')
+
+                                            # Smart display: if small enough, show in description; otherwise chunk
+                                            content_text = '\n'.join(lines)
+
+                                            # Try to fit in description first (cleaner for small files)
+                                            if len(content_text) <= 3900:
+                                                file_embed = discord.Embed(
+                                                    title=f"📄 {self.filename}",
+                                                    description=f"**Path:** `{self.file_path}`\n**Size:** {size_kb:.2f} KB\n**Modified:** {result['modified'].strftime('%Y-%m-%d %H:%M:%S')}\n\n```\n{content_text}\n```",
+                                                    color=discord.Color.green()
+                                                )
+                                            else:
+                                                # Too large for description, use chunked fields
+                                                file_embed = discord.Embed(
+                                                    title=f"📄 {self.filename}",
+                                                    description=f"**Path:** `{self.file_path}`\n**Size:** {size_kb:.2f} KB\n**Modified:** {result['modified'].strftime('%Y-%m-%d %H:%M:%S')}",
+                                                    color=discord.Color.green()
+                                                )
+
+                                                max_chunk_size = 1016
+                                                chunks = []
+                                                current_chunk = []
+                                                current_size = 0
+
+                                                for line in lines:
+                                                    line_with_newline = line + '\n'
+                                                    if current_size + len(line_with_newline) > max_chunk_size:
+                                                        if current_chunk:
+                                                            chunks.append(''.join(current_chunk).rstrip('\n'))
+                                                        current_chunk = [line_with_newline]
+                                                        current_size = len(line_with_newline)
+                                                    else:
+                                                        current_chunk.append(line_with_newline)
+                                                        current_size += len(line_with_newline)
+
+                                                if current_chunk:
+                                                    chunks.append(''.join(current_chunk).rstrip('\n'))
+
+                                                for i, chunk in enumerate(chunks[:10], 1):
+                                                    file_embed.add_field(
+                                                        name=f"{field_title} (Part {i}/{min(len(chunks), 10)})",
+                                                        value=f"```\n{chunk}\n```",
+                                                        inline=False
+                                                    )
+
+                                            await file_btn_interaction.followup.send(embed=file_embed, ephemeral=True)
+
+                                        except Exception as e:
+                                            logger.error(f"Error reading file: {e}", exc_info=True)
+                                            await file_btn_interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+                                nav_view.add_item(FileReadButton(file_item['name'], file_full_path, idx, config_id))
+
+                            await modal_interaction.followup.send(embed=embed, view=nav_view, ephemeral=False)
+
+                        except Exception as e:
+                            logger.error(f"Error browsing SFTP: {e}", exc_info=True)
+                            await modal_interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+                modal = BrowsePathModal()
+                await select_interaction.response.send_modal(modal)
+
+        view = discord.ui.View(timeout=60)
+        view.add_item(ConfigSelect())
+
+        embed = discord.Embed(
+            title="Browse SFTP Files",
+            description="Select an SFTP configuration to browse files:",
+            color=discord.Color.blue()
+        )
+
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    async def _menu_readfile(self, interaction: discord.Interaction):
+        """Handle readfile command from menu."""
+        if not await require_permission(interaction, 'logs_setup'):
+            return
+
+        configs = SFTPConfigQueries.get_active_configs(interaction.guild_id)
+
+        if not configs:
+            await interaction.response.send_message(
+                "❌ No SFTP configurations found. Use `/sftplogs setup` first.",
+                ephemeral=True
+            )
+            return
+
+        # Create config selection dropdown
+        options = [
+            discord.SelectOption(label=c['config_name'], value=c['config_name'])
+            for c in configs[:25]  # Max 25 options
+        ]
+
+        cog_ref = self
+
+        class ConfigSelect(discord.ui.Select):
+            def __init__(self):
+                super().__init__(placeholder="Select SFTP configuration", options=options)
+
+            async def callback(self, select_interaction: discord.Interaction):
+                config_name = self.values[0]
+
+                # Open file path input modal
+                class ReadFileModal(discord.ui.Modal, title="Read File"):
+                    file_path = discord.ui.TextInput(
+                        label="File Path",
+                        placeholder="e.g., TheIsle/Saved/Logs/TheIsle.log",
+                        required=True,
+                        max_length=500
+                    )
+
+                    async def on_submit(self, modal_interaction: discord.Interaction):
+                        file_path = self.file_path.value.strip()
+                        await modal_interaction.response.defer(ephemeral=True)
+
+                        try:
+                            import asyncio
+                            from datetime import datetime
+                            configs = SFTPConfigQueries.get_active_configs(modal_interaction.guild_id)
+                            sftp_config = next((c for c in configs if c['config_name'] == config_name), None)
+
+                            if not sftp_config:
+                                await modal_interaction.followup.send(f"❌ Configuration `{config_name}` not found.", ephemeral=True)
+                                return
+
+                            game_type = GameLogType(sftp_config.get('game_type', 'the_isle_evrima'))
+                            reader = SFTPLogReader(
+                                sftp_config['host'],
+                                sftp_config['port'],
+                                sftp_config['username'],
+                                sftp_config['password'],
+                                game_type
+                            )
+
+                            await reader.connect()
+
+                            def _read_file():
+                                try:
+                                    stat = reader._sftp.stat(file_path)
+                                    file_size = stat.st_size
+                                    mod_time = datetime.fromtimestamp(stat.st_mtime)
+
+                                    file_lower = file_path.lower()
+                                    is_config_file = file_lower.endswith(('.ini', '.conf', '.cfg', '.config'))
+                                    is_log_file = file_lower.endswith(('.log', '.txt'))
+
+                                    lines = []
+                                    display_type = "content"
+
+                                    if is_config_file:
+                                        with reader._sftp.open(file_path, 'r') as f:
+                                            content = f.read()
+                                            if isinstance(content, bytes):
+                                                content = content.decode('utf-8', errors='replace')
+                                            lines = content.splitlines()
+                                        display_type = "full"
+
+                                    elif is_log_file:
+                                        read_from = max(0, file_size - 5500)
+                                        with reader._sftp.open(file_path, 'r') as f:
+                                            f.seek(read_from)
+                                            content = f.read()
+                                            if isinstance(content, bytes):
+                                                content = content.decode('utf-8', errors='replace')
+                                            lines = content.splitlines()[-50:]
+                                        display_type = "last_50"
+
+                                    else:
+                                        read_from = max(0, file_size - 3000)
+                                        with reader._sftp.open(file_path, 'r') as f:
+                                            f.seek(read_from)
+                                            content = f.read()
+                                            if isinstance(content, bytes):
+                                                content = content.decode('utf-8', errors='replace')
+                                            lines = content.splitlines()[-30:]
+                                        display_type = "last_30"
+
+                                    return {
+                                        'success': True,
+                                        'size': file_size,
+                                        'modified': mod_time,
+                                        'lines': lines,
+                                        'display_type': display_type
+                                    }
+                                except FileNotFoundError:
+                                    return {'success': False, 'error': 'File not found'}
+                                except PermissionError:
+                                    return {'success': False, 'error': 'Permission denied'}
+                                except Exception as e:
+                                    return {'success': False, 'error': str(e)}
+
+                            result = await asyncio.to_thread(_read_file)
+                            await reader.disconnect()
+
+                            if not result['success']:
+                                await modal_interaction.followup.send(
+                                    f"❌ Failed to read file: {result['error']}\nPath: `{file_path}`",
+                                    ephemeral=True
+                                )
+                                return
+
+                            size_kb = result['size'] / 1024
+                            display_type = result.get('display_type', 'last_30')
+                            lines = result['lines']
+
+                            display_titles = {
+                                'full': 'Full File Contents',
+                                'last_50': 'Last 50 Lines',
+                                'last_30': 'Last 30 Lines'
+                            }
+                            field_title = display_titles.get(display_type, 'File Contents')
+
+                            # Smart display: if small enough, show in description; otherwise chunk
+                            content_text = '\n'.join(lines)
+
+                            # Try to fit in description first (cleaner for small files)
+                            if len(content_text) <= 3900:
+                                embed = discord.Embed(
+                                    title="📄 File Contents",
+                                    description=f"**Path:** `{file_path}`\n**Size:** {size_kb:.2f} KB\n**Modified:** {result['modified'].strftime('%Y-%m-%d %H:%M:%S')}\n\n```\n{content_text}\n```",
+                                    color=discord.Color.blue()
+                                )
+                            else:
+                                # Too large for description, use chunked fields
+                                embed = discord.Embed(
+                                    title="📄 File Contents",
+                                    description=f"**Path:** `{file_path}`\n**Size:** {size_kb:.2f} KB\n**Modified:** {result['modified'].strftime('%Y-%m-%d %H:%M:%S')}",
+                                    color=discord.Color.blue()
+                                )
+
+                                max_chunk_size = 1016
+                                chunks = []
+                                current_chunk = []
+                                current_size = 0
+
+                                for line in lines:
+                                    line_with_newline = line + '\n'
+                                    if current_size + len(line_with_newline) > max_chunk_size:
+                                        if current_chunk:
+                                            chunks.append(''.join(current_chunk).rstrip('\n'))
+                                        current_chunk = [line_with_newline]
+                                        current_size = len(line_with_newline)
+                                    else:
+                                        current_chunk.append(line_with_newline)
+                                        current_size += len(line_with_newline)
+
+                                if current_chunk:
+                                    chunks.append(''.join(current_chunk).rstrip('\n'))
+
+                                for i, chunk in enumerate(chunks[:10], 1):
+                                    embed.add_field(
+                                        name=f"{field_title} (Part {i}/{min(len(chunks), 10)})",
+                                        value=f"```\n{chunk}\n```",
+                                        inline=False
+                                    )
+
+                            await modal_interaction.followup.send(embed=embed, ephemeral=True)
+
+                        except Exception as e:
+                            logger.error(f"Error reading file: {e}", exc_info=True)
+                            await modal_interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+                modal = ReadFileModal()
+                await select_interaction.response.send_modal(modal)
+
+        view = discord.ui.View(timeout=60)
+        view.add_item(ConfigSelect())
+
+        embed = discord.Embed(
+            title="Read File Contents",
+            description="Select an SFTP configuration and enter the file path:",
+            color=discord.Color.blue()
+        )
+
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    async def _menu_fileinfo(self, interaction: discord.Interaction):
+        """Handle fileinfo command from menu."""
+        if not await require_permission(interaction, 'logs_setup'):
+            return
+
+        configs = SFTPConfigQueries.get_active_configs(interaction.guild_id)
+
+        if not configs:
+            await interaction.response.send_message(
+                "❌ No SFTP configurations found. Use `/sftplogs setup` first.",
+                ephemeral=True
+            )
+            return
+
+        # Create config selection dropdown
+        options = [
+            discord.SelectOption(label=c['config_name'], value=c['config_name'])
+            for c in configs[:25]  # Max 25 options
+        ]
+
+        cog_ref = self
+
+        class ConfigSelect(discord.ui.Select):
+            def __init__(self):
+                super().__init__(placeholder="Select SFTP configuration", options=options)
+
+            async def callback(self, select_interaction: discord.Interaction):
+                config_name = self.values[0]
+
+                # Open file path input modal
+                class FileInfoModal(discord.ui.Modal, title="File Info"):
+                    file_path = discord.ui.TextInput(
+                        label="File Path",
+                        placeholder="e.g., TheIsle/Saved/Logs/TheIsle.log",
+                        required=True,
+                        max_length=500
+                    )
+
+                    async def on_submit(self, modal_interaction: discord.Interaction):
+                        file_path = self.file_path.value.strip()
+                        await modal_interaction.response.defer(ephemeral=True)
+
+                        try:
+                            import asyncio
+                            from datetime import datetime
+                            configs = SFTPConfigQueries.get_active_configs(modal_interaction.guild_id)
+                            sftp_config = next((c for c in configs if c['config_name'] == config_name), None)
+
+                            if not sftp_config:
+                                await modal_interaction.followup.send(f"❌ Configuration `{config_name}` not found.", ephemeral=True)
+                                return
+
+                            game_type = GameLogType(sftp_config.get('game_type', 'the_isle_evrima'))
+                            reader = SFTPLogReader(
+                                sftp_config['host'],
+                                sftp_config['port'],
+                                sftp_config['username'],
+                                sftp_config['password'],
+                                game_type
+                            )
+
+                            await reader.connect()
+
+                            def _check_file():
+                                try:
+                                    stat = reader._sftp.stat(file_path)
+
+                                    file_size = stat.st_size
+                                    mod_time = datetime.fromtimestamp(stat.st_mtime)
+
+                                    # Try to read first and last few lines
+                                    with reader._sftp.open(file_path, 'r') as f:
+                                        first_lines = []
+                                        for _ in range(3):
+                                            line = f.readline()
+                                            if not line:
+                                                break
+                                            if isinstance(line, bytes):
+                                                line = line.decode('utf-8', errors='replace')
+                                            first_lines.append(line.strip())
+
+                                        # Last 3 lines
+                                        f.seek(max(0, file_size - 1000))
+                                        content = f.read()
+                                        if isinstance(content, bytes):
+                                            content = content.decode('utf-8', errors='replace')
+                                        last_lines = content.splitlines()[-3:]
+
+                                    return {
+                                        'exists': True,
+                                        'size': file_size,
+                                        'modified': mod_time,
+                                        'first_lines': first_lines,
+                                        'last_lines': last_lines
+                                    }
+                                except FileNotFoundError:
+                                    return {'exists': False}
+                                except Exception as e:
+                                    return {'exists': False, 'error': str(e)}
+
+                            info = await asyncio.to_thread(_check_file)
+                            await reader.disconnect()
+
+                            if not info['exists']:
+                                error_msg = f": {info.get('error')}" if 'error' in info else ""
+                                embed = discord.Embed(
+                                    title="❌ File Not Found",
+                                    description=f"The file does not exist{error_msg}",
+                                    color=discord.Color.red()
+                                )
+                                embed.add_field(name="Path", value=f"`{file_path}`", inline=False)
+                                embed.add_field(
+                                    name="Possible Reasons",
+                                    value="• File hasn't been created yet\n"
+                                          "• The path is incorrect\n"
+                                          "• The file was deleted\n"
+                                          "• Permission issue",
+                                    inline=False
+                                )
+                                await modal_interaction.followup.send(embed=embed, ephemeral=True)
+                                return
+
+                            # File exists - show details
+                            size_kb = info['size'] / 1024
+                            first_preview = "\n".join(f"{line[:100]}" for line in info['first_lines']) if info['first_lines'] else "(empty)"
+                            last_preview = "\n".join(f"{line[:100]}" for line in info['last_lines']) if info['last_lines'] else "(empty)"
+
+                            embed = discord.Embed(
+                                title="✅ File Found",
+                                description=f"**Path:** `{file_path}`",
+                                color=discord.Color.green()
+                            )
+                            embed.add_field(name="Size", value=f"{size_kb:.2f} KB ({info['size']} bytes)", inline=True)
+                            embed.add_field(name="Modified", value=info['modified'].strftime('%Y-%m-%d %H:%M:%S'), inline=True)
+                            embed.add_field(name="First Lines", value=f"```{first_preview[:500]}```", inline=False)
+                            embed.add_field(name="Last Lines", value=f"```{last_preview[:500]}```", inline=False)
+
+                            await modal_interaction.followup.send(embed=embed, ephemeral=True)
+
+                        except Exception as e:
+                            logger.error(f"Error checking file: {e}", exc_info=True)
+                            await modal_interaction.followup.send(f"❌ Failed to check file: {e}", ephemeral=True)
+
+                modal = FileInfoModal()
+                await select_interaction.response.send_modal(modal)
+
+        view = discord.ui.View(timeout=60)
+        view.add_item(ConfigSelect())
+
+        embed = discord.Embed(
+            title="Check File Info",
+            description="Select an SFTP configuration and enter the file path:",
+            color=discord.Color.blue()
+        )
+
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

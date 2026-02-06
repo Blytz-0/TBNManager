@@ -224,7 +224,7 @@ class PlayerQueries:
             return result['count'] if result else 0
 
     # ==========================================
-    # BACKWARD COMPATIBILITY
+    # BACKWARD COMPATIBILITY & ALIASES
     # ==========================================
 
     @staticmethod
@@ -235,3 +235,17 @@ class PlayerQueries:
         Deprecated: Use link_alderon() instead.
         """
         return PlayerQueries.link_alderon(guild_id, user_id, username, player_id, player_name)
+
+    @staticmethod
+    def unlink_steam(guild_id: int, user_id: int) -> bool:
+        """
+        Alias for clear_steam() - unlink Steam ID from a user.
+        """
+        return PlayerQueries.clear_steam(guild_id, user_id)
+
+    @staticmethod
+    def unlink_alderon(guild_id: int, user_id: int) -> bool:
+        """
+        Alias for clear_alderon() - unlink Alderon ID from a user.
+        """
+        return PlayerQueries.clear_alderon(guild_id, user_id)

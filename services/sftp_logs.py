@@ -21,6 +21,23 @@ from typing import Optional, Callable, Any
 
 logger = logging.getLogger(__name__)
 
+# Import enhanced parser
+try:
+    from services.log_parsers import (
+        get_parser as get_enhanced_parser,
+        LogType as EnhancedLogType,
+        PlayerLoginEvent,
+        PlayerLogoutEvent,
+        PlayerChatEvent,
+        AdminCommandEvent,
+        RCONCommandEvent,
+        PlayerDeathEvent
+    )
+    ENHANCED_PARSER_AVAILABLE = True
+except ImportError:
+    ENHANCED_PARSER_AVAILABLE = False
+    logger.warning("Enhanced log parser not available")
+
 
 class LogType(Enum):
     """Types of game logs."""
@@ -142,28 +159,71 @@ class LogParser:
 
 class EvrimaLogParser(LogParser):
     """
-    Log parser for The Isle Evrima.
+    Log parser for The Isle Evrima unified log file.
 
-    Log patterns:
-    - Chat: [2024.01.22-15.30.45][LogTheIsleChatData]: [Global] [Group] PlayerName [76561198012345678]: Hello world
-    - Kill: [2024.01.22-15.30.45][LogTheIsleKills]: PlayerA [76561198012345678] killed PlayerB [76561198087654321]
-    - Admin: [2024.01.22-15.30.45][LogTheIsleAdmin]: Admin [76561198012345678] executed: /kick PlayerB
+    Reads a single log file and auto-detects log types:
+    - Chat: LogTheIsleChatData: [timestamp] [Channel] [GROUP-id] PlayerName [SteamID]: message
+    - Commands: LogTheIsleCommandData: [timestamp] Player [SteamID] used command: ...
+    - Joins/Leaves: LogTheIsleJoinData: [timestamp] Player [SteamID] Joined/Left The Server
+    - Kills: LogTheIsleKills: [timestamp] PlayerA [SteamID] killed PlayerB [SteamID]
     """
 
-    # Regex patterns
-    TIMESTAMP_PATTERN = re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2})\]')
+    # Regex patterns - Updated to match actual The Isle log format
+    TIMESTAMP_PATTERN = re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}(?:\.\d{3})?)\]')
+
+    # Chat: LogTheIsleChatData: [timestamp] [Spatial] [GROUP-id] PlayerName [SteamID]: message
     CHAT_PATTERN = re.compile(
-        r'\[LogTheIsleChatData\]:\s*\[(\w+)\]\s*(?:\[(\w+)\])?\s*(.+?)\s*\[(\d{17})\]:\s*(.+)$'
+        r'LogTheIsleChatData:\s*\[[\d.\-:]+\]\s*\[(\w+)\]\s*\[GROUP-\d+\]\s*(.+?)\s*\[(\d{17})\]:\s*(.+)$'
     )
+
+    # Kill: LogTheIsleKills: [timestamp] PlayerA [SteamID] killed PlayerB [SteamID]
     KILL_PATTERN = re.compile(
-        r'\[LogTheIsleKills\]:\s*(.+?)\s*\[(\d{17})\]\s*killed\s*(.+?)\s*\[(\d{17})\]'
+        r'LogTheIsleKills:\s*\[[\d.\-:]+\]\s*(.+?)\s*\[(\d{17})\]\s*killed\s*(.+?)\s*\[(\d{17})\]'
     )
+
+    # Admin commands: LogTheIsleCommandData: [timestamp] Player [SteamID] used command: CommandName
     ADMIN_PATTERN = re.compile(
-        r'\[LogTheIsleAdmin\]:\s*(.+?)\s*\[(\d{17})\]\s*executed:\s*(.+)$'
+        r'LogTheIsleCommandData:\s*\[[\d.\-:]+\]\s*(.+?)\s*\[(\d{17})\]\s*used command:\s*(.+)$'
+    )
+
+    # RCON commands: LogTheIsleCommandData: [timestamp] RCON Command Used [Action] : details
+    RCON_PATTERN = re.compile(
+        r'LogTheIsleCommandData:\s*\[[\d.\-:]+\]\s*RCON Command Used\s*\[([^\]]+)\]\s*:\s*(.*)$'
+    )
+
+    # Join: LogTheIsleJoinData: [timestamp] Player [SteamID] Joined The Server
+    JOIN_PATTERN = re.compile(
+        r'LogTheIsleJoinData:\s*\[[\d.\-:]+\]\s*(.+?)\s*\[(\d{17})\]\s*Joined The Server'
+    )
+
+    # Leave: LogTheIsleJoinData: [timestamp] Player [SteamID] Left The Server
+    LEAVE_PATTERN = re.compile(
+        r'LogTheIsleJoinData:\s*\[[\d.\-:]+\]\s*(.+?)\s*\[(\d{17})\]\s*Left The Server'
     )
 
     def __init__(self):
         super().__init__(GameLogType.THE_ISLE_EVRIMA)
+
+    def parse_any_line(self, line: str) -> Optional[LogEntry]:
+        """
+        Parse any line from the unified log file.
+        Auto-detects log type and routes to appropriate parser.
+        """
+        line = line.strip()
+        if not line:
+            return None
+
+        # Detect log type from line content
+        if 'LogTheIsleChatData:' in line:
+            return self._parse_chat(line)
+        elif 'LogTheIsleKills:' in line:
+            return self._parse_kill(line)
+        elif 'LogTheIsleCommandData:' in line:
+            return self._parse_admin(line)
+        elif 'LogTheIsleJoinData:' in line and ('Joined The Server' in line or 'Left The Server' in line):
+            return self._parse_join_leave(line)
+
+        return None
 
     def _parse_chat(self, line: str) -> Optional[ChatLogEntry]:
         """Parse Evrima chat log line."""
@@ -174,11 +234,10 @@ class EvrimaLogParser(LogParser):
             return None
 
         timestamp = self._parse_timestamp(ts_match.group(1)) if ts_match else datetime.now()
-        channel = chat_match.group(1)
-        group = chat_match.group(2) or ""
-        player_name = chat_match.group(3)
-        player_id = chat_match.group(4)
-        message = chat_match.group(5)
+        channel = chat_match.group(1)  # Spatial, Admin, Global, etc.
+        player_name = chat_match.group(2)
+        player_id = chat_match.group(3)
+        message = chat_match.group(4)
 
         return ChatLogEntry(
             log_type=LogType.CHAT,
@@ -188,7 +247,7 @@ class EvrimaLogParser(LogParser):
             player_name=player_name,
             player_id=player_id,
             message=message,
-            channel=f"{channel} {group}".strip()
+            channel=channel
         )
 
     def _parse_kill(self, line: str) -> Optional[KillLogEntry]:
@@ -213,33 +272,94 @@ class EvrimaLogParser(LogParser):
         )
 
     def _parse_admin(self, line: str) -> Optional[AdminLogEntry]:
-        """Parse Evrima admin log line."""
+        """Parse Evrima admin/command log line."""
         ts_match = self.TIMESTAMP_PATTERN.search(line)
-        admin_match = self.ADMIN_PATTERN.search(line)
+        timestamp = self._parse_timestamp(ts_match.group(1)) if ts_match else datetime.now()
 
+        # Try RCON command pattern first
+        rcon_match = self.RCON_PATTERN.search(line)
+        if rcon_match:
+            action = rcon_match.group(1)  # e.g., "Announce", "Get Player List"
+            details = rcon_match.group(2)
+
+            return AdminLogEntry(
+                log_type=LogType.ADMIN,
+                timestamp=timestamp,
+                raw_line=line,
+                parsed_data={},
+                admin_name="RCON",
+                admin_id="RCON",
+                action=action,
+                target=None,
+                details=details if details else action
+            )
+
+        # Try player command pattern
+        admin_match = self.ADMIN_PATTERN.search(line)
         if not admin_match:
             return None
 
-        timestamp = self._parse_timestamp(ts_match.group(1)) if ts_match else datetime.now()
+        player_name = admin_match.group(1)
+        player_id = admin_match.group(2)
         command = admin_match.group(3)
 
-        # Try to extract target from command
-        target = None
-        parts = command.split()
-        if len(parts) > 1:
-            target = parts[1]
+        # Extract action from command (first part before "at:")
+        action = command.split(' at:')[0] if ' at:' in command else command
 
         return AdminLogEntry(
             log_type=LogType.ADMIN,
             timestamp=timestamp,
             raw_line=line,
             parsed_data={},
-            admin_name=admin_match.group(1),
-            admin_id=admin_match.group(2),
-            action=parts[0] if parts else command,
-            target=target,
+            admin_name=player_name,
+            admin_id=player_id,
+            action=action,
+            target=None,
             details=command
         )
+
+    def _parse_join_leave(self, line: str) -> Optional[AdminLogEntry]:
+        """Parse join/leave events as admin log entries."""
+        ts_match = self.TIMESTAMP_PATTERN.search(line)
+        timestamp = self._parse_timestamp(ts_match.group(1)) if ts_match else datetime.now()
+
+        # Check for join
+        join_match = self.JOIN_PATTERN.search(line)
+        if join_match:
+            player_name = join_match.group(1)
+            player_id = join_match.group(2)
+
+            return AdminLogEntry(
+                log_type=LogType.ADMIN,
+                timestamp=timestamp,
+                raw_line=line,
+                parsed_data={},
+                admin_name=player_name,
+                admin_id=player_id,
+                action="Player Joined",
+                target=None,
+                details=f"{player_name} joined the server"
+            )
+
+        # Check for leave
+        leave_match = self.LEAVE_PATTERN.search(line)
+        if leave_match:
+            player_name = leave_match.group(1)
+            player_id = leave_match.group(2)
+
+            return AdminLogEntry(
+                log_type=LogType.ADMIN,
+                timestamp=timestamp,
+                raw_line=line,
+                parsed_data={},
+                admin_name=player_name,
+                admin_id=player_id,
+                action="Player Left",
+                target=None,
+                details=f"{player_name} left the server"
+            )
+
+        return None
 
 
 class PathOfTitansLogParser(LogParser):
@@ -328,11 +448,26 @@ class PathOfTitansLogParser(LogParser):
         return None
 
 
-def get_log_parser(game_type: GameLogType | str) -> LogParser:
-    """Get the appropriate log parser for a game type."""
+def get_log_parser(game_type: GameLogType | str):
+    """
+    Get the appropriate log parser for a game type.
+
+    Prefers enhanced parser if available, falls back to legacy parser.
+    """
     if isinstance(game_type, str):
         game_type = GameLogType(game_type)
 
+    # Try to use enhanced parser first
+    if ENHANCED_PARSER_AVAILABLE:
+        try:
+            game_type_str = game_type.value if hasattr(game_type, 'value') else str(game_type)
+            enhanced_parser = get_enhanced_parser(game_type_str)
+            logger.info(f"Using enhanced parser for {game_type_str}")
+            return enhanced_parser
+        except Exception as e:
+            logger.warning(f"Failed to load enhanced parser, falling back to legacy: {e}")
+
+    # Fall back to legacy parser
     if game_type == GameLogType.THE_ISLE_EVRIMA:
         return EvrimaLogParser()
     elif game_type == GameLogType.PATH_OF_TITANS:
@@ -350,12 +485,13 @@ class SFTPLogReader:
     """
 
     def __init__(self, host: str, port: int, username: str, password: str,
-                 game_type: GameLogType):
+                 game_type: GameLogType, server_name: str = "Unknown Server"):
         self.host = host
         self.port = port
         self.username = username
         self.password = password
         self.game_type = game_type
+        self.server_name = server_name  # For log identification
         self.parser = get_log_parser(game_type)
         self._transport = None
         self._sftp = None
@@ -364,15 +500,24 @@ class SFTPLogReader:
         """Establish SFTP connection."""
         try:
             import paramiko
+            import socket
 
             def _connect():
-                self._transport = paramiko.Transport((self.host, self.port))
+                # Create socket with timeout
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(30)  # 30 second timeout for socket operations
+                sock.connect((self.host, self.port))
+
+                # Create transport with longer timeout for slow servers
+                self._transport = paramiko.Transport(sock)
+                self._transport.banner_timeout = 30  # Increase from default 15s to 30s
+                self._transport.auth_timeout = 30    # Increase auth timeout as well
                 self._transport.connect(username=self.username, password=self.password)
                 self._sftp = paramiko.SFTPClient.from_transport(self._transport)
                 return True
 
             result = await asyncio.to_thread(_connect)
-            logger.info(f"SFTP connected to {self.host}:{self.port}")
+            logger.info(f"[{self.server_name}] SFTP connected to {self.host}:{self.port}")
             return result
         except ImportError:
             raise SFTPError("paramiko library not installed")
@@ -468,6 +613,68 @@ class SFTPLogReader:
 
         return entries, new_position, new_hash
 
+    async def read_and_parse_unified(self, file_path: str,
+                                     last_position: int = 0,
+                                     last_line_hash: Optional[str] = None) -> tuple[list[LogEntry], int, str]:
+        """
+        Read and parse new log entries from a unified log file.
+        Auto-detects log type for each line (chat, kill, admin, etc.).
+
+        Used for games like The Isle Evrima where all logs are in one file.
+
+        Returns:
+            Tuple of (parsed_entries, new_position, new_last_line_hash)
+        """
+        lines, new_position, new_hash = await self.read_new_lines(
+            file_path, last_position, last_line_hash
+        )
+
+        logger.debug(f"Read {len(lines)} new lines from {file_path}")
+
+        entries = []
+        parsed_count = 0
+        skipped_count = 0
+
+        for line in lines:
+            # Check if using enhanced parser (returns tuple) or legacy parser
+            if ENHANCED_PARSER_AVAILABLE and hasattr(self.parser, 'parse_line'):
+                # Enhanced parser: parse_line(line) returns (LogType, Event)
+                try:
+                    result = self.parser.parse_line(line)
+                    if result and len(result) == 2:
+                        log_type, event = result
+                        if event:  # If event is not None
+                            entry = event
+                        else:
+                            entry = None
+                    else:
+                        entry = None
+                except TypeError:
+                    # Fallback to legacy parser signature
+                    entry = (self.parser.parse_line(line, LogType.CHAT) or
+                            self.parser.parse_line(line, LogType.KILL) or
+                            self.parser.parse_line(line, LogType.ADMIN))
+            elif hasattr(self.parser, 'parse_any_line'):
+                # Legacy Evrima parser has parse_any_line
+                entry = self.parser.parse_any_line(line)
+            else:
+                # Fallback to trying each log type with legacy parser
+                entry = (self.parser.parse_line(line, LogType.CHAT) or
+                        self.parser.parse_line(line, LogType.KILL) or
+                        self.parser.parse_line(line, LogType.ADMIN))
+
+            if entry:
+                entries.append(entry)
+                parsed_count += 1
+            else:
+                skipped_count += 1
+                if skipped_count <= 3:  # Only log first few skipped lines
+                    logger.debug(f"Skipped line (no match): {line[:100]}")
+
+        logger.info(f"[{self.server_name}] Parsed {parsed_count} entries, skipped {skipped_count} lines from {file_path}")
+
+        return entries, new_position, new_hash
+
     async def test_connection(self) -> tuple[bool, str]:
         """Test SFTP connection."""
         try:
@@ -489,8 +696,10 @@ class LogMonitor:
     Manages multiple log files for a single SFTP connection.
     """
 
-    def __init__(self, sftp_reader: SFTPLogReader):
+    def __init__(self, sftp_reader: SFTPLogReader, unified_mode: bool = False, config_id: int = None):
         self.reader = sftp_reader
+        self.unified_mode = unified_mode  # If True, one file contains all log types
+        self.config_id = config_id  # SFTP config ID for saving state to database
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._file_states: dict[str, dict] = {}  # file_path -> {position, hash, log_type}
@@ -500,13 +709,22 @@ class LogMonitor:
             LogType.ADMIN: []
         }
 
-    def add_file(self, file_path: str, log_type: LogType,
+    def add_file(self, file_path: str, log_type: LogType = None,
                  initial_position: int = 0, initial_hash: str = "") -> None:
-        """Add a file to monitor."""
+        """
+        Add a file to monitor.
+
+        Args:
+            file_path: Path to log file
+            log_type: Type of logs in this file (or None for unified mode)
+            initial_position: Starting byte position
+            initial_hash: Hash of last read line
+        """
         self._file_states[file_path] = {
             'position': initial_position,
             'hash': initial_hash,
-            'log_type': log_type
+            'log_type': log_type,  # None for unified files
+            'unified': log_type is None or self.unified_mode
         }
 
     def remove_file(self, file_path: str) -> None:
@@ -521,21 +739,33 @@ class LogMonitor:
     async def start(self, poll_interval: int = 30) -> None:
         """Start the monitor loop."""
         if self._running:
+            logger.warning("Monitor already running")
             return
 
         self._running = True
+        logger.info(f"Starting log monitor with {len(self._file_states)} file(s), poll interval: {poll_interval}s")
 
         async def monitor_loop():
-            await self.reader.connect()
-            while self._running:
-                try:
-                    await self._poll_all_files()
-                except Exception as e:
-                    logger.error(f"Error in monitor loop: {e}")
-                await asyncio.sleep(poll_interval)
-            await self.reader.disconnect()
+            try:
+                logger.info("Monitor loop: Connecting to SFTP...")
+                await self.reader.connect()
+                logger.info("Monitor loop: Connected successfully, beginning poll loop")
+
+                while self._running:
+                    try:
+                        await self._poll_all_files()
+                    except Exception as e:
+                        logger.error(f"Error in monitor loop: {e}", exc_info=True)
+                    await asyncio.sleep(poll_interval)
+
+                logger.info("Monitor loop: Stopping, disconnecting from SFTP")
+                await self.reader.disconnect()
+            except Exception as e:
+                logger.error(f"Fatal error in monitor loop: {e}", exc_info=True)
+                self._running = False
 
         self._task = asyncio.create_task(monitor_loop())
+        logger.info("Monitor loop task created")
 
     async def stop(self) -> None:
         """Stop the monitor loop."""
@@ -552,29 +782,91 @@ class LogMonitor:
         """Poll all monitored files for new entries."""
         for file_path, state in self._file_states.items():
             try:
-                entries, new_position, new_hash = await self.reader.read_and_parse(
-                    file_path,
-                    state['log_type'],
-                    state['position'],
-                    state['hash']
-                )
+                logger.debug(f"Polling file: {file_path} (position: {state['position']})")
 
-                # Update state
+                # Check if this is a unified file (all log types in one file)
+                if state.get('unified', False) or self.unified_mode:
+                    # Use unified parser that auto-detects log types
+                    entries, new_position, new_hash = await self.reader.read_and_parse_unified(
+                        file_path,
+                        state['position'],
+                        state['hash']
+                    )
+                    logger.debug(f"Unified mode: Read {len(entries)} entries from {file_path}")
+                else:
+                    # Use single-type parser
+                    entries, new_position, new_hash = await self.reader.read_and_parse(
+                        file_path,
+                        state['log_type'],
+                        state['position'],
+                        state['hash']
+                    )
+                    logger.debug(f"Single-type mode: Read {len(entries)} entries from {file_path}")
+
+                # Update state in memory
                 state['position'] = new_position
                 state['hash'] = new_hash
 
-                # Invoke callbacks
+                logger.debug(f"New position: {new_position}")
+
+                # Save position to database to persist across restarts
+                if self.config_id and new_position > 0 and len(entries) > 0:
+                    try:
+                        from database.queries.rcon import LogMonitorStateQueries
+                        # Determine log type for database storage
+                        log_type_str = state.get('log_type')
+                        if log_type_str:
+                            log_type_value = log_type_str.value if hasattr(log_type_str, 'value') else str(log_type_str)
+                        else:
+                            log_type_value = 'admin'  # Default for unified mode
+
+                        LogMonitorStateQueries.update_state(
+                            sftp_config_id=self.config_id,
+                            log_type=log_type_value,
+                            file_path=file_path,
+                            position=new_position,
+                            line_hash=new_hash
+                        )
+                        logger.debug(f"[{self.reader.server_name}] Saved position {new_position} to database")
+                    except Exception as e:
+                        logger.warning(f"Failed to save file position to database: {e}")
+
+                # Invoke callbacks for each entry based on its detected type
                 for entry in entries:
-                    for callback in self._callbacks[entry.log_type]:
+                    # Determine the log type - handle both legacy and enhanced events
+                    if hasattr(entry, 'log_type'):
+                        # Legacy event (ChatLogEntry, KillLogEntry, AdminLogEntry)
+                        log_type = entry.log_type
+                    elif ENHANCED_PARSER_AVAILABLE:
+                        # Enhanced event - map class type to LogType
+                        if isinstance(entry, (PlayerLoginEvent, PlayerLogoutEvent)):
+                            log_type = LogType.ADMIN  # Route login/logout to admin callbacks for now
+                        elif isinstance(entry, PlayerChatEvent):
+                            log_type = LogType.CHAT
+                        elif isinstance(entry, (AdminCommandEvent, RCONCommandEvent)):
+                            log_type = LogType.ADMIN  # Route both admin and RCON commands to admin callbacks
+                        elif isinstance(entry, PlayerDeathEvent):
+                            log_type = LogType.KILL
+                        else:
+                            logger.warning(f"Unknown enhanced event type: {type(entry)}")
+                            continue
+                    else:
+                        logger.warning(f"Unknown event type: {type(entry)}")
+                        continue
+
+                    raw_preview = entry.raw_line[:100] if hasattr(entry, 'raw_line') else str(entry)[:100]
+                    logger.debug(f"Processing entry: {log_type} - {raw_preview}")
+
+                    for callback in self._callbacks[log_type]:
                         try:
                             result = callback(entry)
                             if asyncio.iscoroutine(result):
                                 await result
                         except Exception as e:
-                            logger.error(f"Callback error: {e}")
+                            logger.error(f"Callback error: {e}", exc_info=True)
 
             except Exception as e:
-                logger.error(f"Error polling {file_path}: {e}")
+                logger.error(f"Error polling {file_path}: {e}", exc_info=True)
 
     def get_state(self, file_path: str) -> Optional[dict]:
         """Get current state for a file."""
@@ -598,10 +890,23 @@ class LogMonitorManager:
 
     def create_monitor(self, config_id: int, host: str, port: int,
                        username: str, password: str,
-                       game_type: GameLogType) -> LogMonitor:
-        """Create a new log monitor."""
-        reader = SFTPLogReader(host, port, username, password, game_type)
-        monitor = LogMonitor(reader)
+                       game_type: GameLogType, unified_mode: bool = False,
+                       server_name: str = "Unknown Server") -> LogMonitor:
+        """
+        Create a new log monitor.
+
+        Args:
+            config_id: SFTP configuration ID
+            host: SFTP server host
+            port: SFTP server port
+            username: SFTP username
+            password: SFTP password
+            game_type: Game log format type
+            unified_mode: If True, expects a single file with all log types
+            server_name: Server name for log identification
+        """
+        reader = SFTPLogReader(host, port, username, password, game_type, server_name=server_name)
+        monitor = LogMonitor(reader, unified_mode=unified_mode, config_id=config_id)
         self._monitors[config_id] = monitor
         return monitor
 

@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS rcon_servers (
     game_type ENUM('path_of_titans', 'the_isle_evrima') NOT NULL,
     host VARCHAR(255) NOT NULL,
     port INT NOT NULL DEFAULT 8888,
-    password_encrypted VARBINARY(512) NOT NULL,
+    password VARCHAR(512) NOT NULL,
     is_default BOOLEAN DEFAULT FALSE,
     is_active BOOLEAN DEFAULT TRUE,
     last_connected_at TIMESTAMP NULL,
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS pterodactyl_connections (
     guild_id BIGINT UNSIGNED NOT NULL,
     connection_name VARCHAR(100) NOT NULL,
     panel_url VARCHAR(512) NOT NULL,
-    api_key_encrypted VARBINARY(512) NOT NULL,
+    api_key VARCHAR(512) NOT NULL,
     is_active BOOLEAN DEFAULT TRUE,
     last_connected_at TIMESTAMP NULL,
     last_error TEXT NULL,
@@ -93,10 +93,11 @@ CREATE TABLE IF NOT EXISTS server_sftp_config (
     rcon_server_id INT NULL,
     pterodactyl_server_id INT NULL,
     config_name VARCHAR(100) NOT NULL,
+    game_type ENUM('path_of_titans', 'the_isle_evrima') DEFAULT 'the_isle_evrima',
     host VARCHAR(255) NOT NULL,
     port INT NOT NULL DEFAULT 22,
     username VARCHAR(100) NOT NULL,
-    password_encrypted VARBINARY(512) NOT NULL,
+    password VARCHAR(512) NOT NULL,
     chat_log_path VARCHAR(512) NULL,
     kill_log_path VARCHAR(512) NULL,
     admin_log_path VARCHAR(512) NULL,
@@ -233,21 +234,6 @@ CREATE TABLE IF NOT EXISTS guild_rcon_settings (
 );
 
 -- ============================================
--- ENCRYPTION KEY STORAGE
--- ============================================
--- Stores guild-specific encryption keys for credentials
--- The actual encryption key is derived from this + a master key in env
-
-CREATE TABLE IF NOT EXISTS guild_encryption_keys (
-    guild_id BIGINT UNSIGNED PRIMARY KEY,
-    key_salt VARBINARY(32) NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    rotated_at TIMESTAMP NULL,
-
-    FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
-);
-
--- ============================================
 -- MIGRATION NOTES
 -- ============================================
 -- This migration adds support for:
@@ -270,8 +256,8 @@ CREATE TABLE IF NOT EXISTS guild_encryption_keys (
 --   - Incremental reading (only new lines)
 --
 -- Security:
---   - All passwords/API keys encrypted at rest
---   - Guild-specific encryption keys with salts
+--   - All passwords/API keys stored as plain text (database security at infrastructure level)
 --   - Role-based access control for dangerous commands
+--   - Audit logging for all RCON commands
 
 SELECT 'Migration 007 completed: RCON & Pterodactyl integration tables created' AS status;

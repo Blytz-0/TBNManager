@@ -300,10 +300,17 @@ class EvrimaRCONClient(BaseRCONClient):
             return RCONResponse(success=False, message=str(e))
 
     async def dm(self, player_id: str, message: str) -> RCONResponse:
-        """Send a direct message to a player."""
+        """Send a direct message to a player.
+
+        Note: DM command format is experimental. The Isle Evrima's DM implementation
+        appears to be incomplete/buggy in-game. Multiple formats attempted:
+        - Format 1 (null-separated): player_id\x00message\x00
+        - Format 2 (comma-separated): player_id,message\x00
+        - Format 3 (space-separated): player_id message\x00
+        """
         try:
-            # DM: \x02\x11 + player_id + \x00 + message + \x00
-            command = b'\x02\x11' + player_id.encode() + b'\x00' + message.encode() + b'\x00'
+            # Use comma-separated format (Format 2) which works in-game
+            command = b'\x02\x11' + f'{player_id},{message}'.encode() + b'\x00'
             response = await self._send_command(command)
             return RCONResponse(
                 success=True,
@@ -442,14 +449,20 @@ class EvrimaRCONClient(BaseRCONClient):
             return None
 
     async def wipe_corpses(self) -> RCONResponse:
-        """Wipe all corpses from the server."""
+        """
+        Wipe all corpses from the server.
+
+        NOTE: The game logs show empty brackets [] instead of the command name,
+        but the command works correctly - this is just a cosmetic logging issue
+        in The Isle Evrima.
+        """
         try:
             # Wipe Corpses: \x02\x13\x00
             command = b'\x02\x13\x00'
             response = await self._send_command(command)
             return RCONResponse(
                 success=True,
-                message="Corpses wiped",
+                message="All corpses wiped from server",
                 raw_response=response
             )
         except RCONCommandError as e:
@@ -479,6 +492,9 @@ class EvrimaRCONClient(BaseRCONClient):
 
         Args:
             enabled: True to enable whitelist, False to disable
+
+        Note: The game logs show the inverse of what's sent (game bug), but the
+        actual behavior is correct. Send 1 to enable, 0 to disable.
         """
         try:
             # Toggle Whitelist: \x02\x81 + (1 or 0) + \x00
@@ -536,6 +552,9 @@ class EvrimaRCONClient(BaseRCONClient):
 
         Args:
             enabled: True to enable global chat, False to disable
+
+        Note: The game logs show the inverse of what's sent (game bug), but the
+        actual behavior is correct. Send 1 to enable, 0 to disable.
         """
         try:
             # Toggle Global Chat: \x02\x84 + (1 or 0) + \x00
@@ -555,6 +574,9 @@ class EvrimaRCONClient(BaseRCONClient):
 
         Args:
             enabled: True to enable humans, False to disable
+
+        Note: The game logs show the inverse of what's sent (game bug), but the
+        actual behavior is correct. Send 1 to enable, 0 to disable.
         """
         try:
             # Toggle Humans: \x02\x86 + (1 or 0) + \x00
@@ -574,6 +596,9 @@ class EvrimaRCONClient(BaseRCONClient):
 
         Args:
             enabled: True to enable AI, False to disable
+
+        Note: The game logs show the inverse of what's sent (game bug), but the
+        actual behavior is correct. Send 1 to enable, 0 to disable.
         """
         try:
             # Toggle AI: \x02\x90 + (1 or 0) + \x00
@@ -676,6 +701,33 @@ class EvrimaRCONClient(BaseRCONClient):
             return data
         except RCONCommandError:
             return None
+
+    async def console(self, command: str) -> RCONResponse:
+        """
+        Send a raw console command to the server.
+
+        This is a generic passthrough for any RCON command not explicitly supported.
+        Note: The Isle Evrima doesn't have a generic "console command" protocol,
+        so this attempts to send the command as-is. Use with caution.
+
+        Args:
+            command: Raw console command string
+        """
+        try:
+            # Try sending as raw command - this may or may not work depending on the command
+            command_bytes = command.encode() + b'\x00'
+            response = await self._send_command(command_bytes)
+            return RCONResponse(
+                success=True,
+                message=f"Command sent: {command}",
+                data={"command": command},
+                raw_response=response
+            )
+        except RCONCommandError as e:
+            return RCONResponse(
+                success=False,
+                message=f"Console command failed: {e}"
+            )
 
 
 class PathOfTitansRCONClient(BaseRCONClient):
@@ -838,6 +890,29 @@ class PathOfTitansRCONClient(BaseRCONClient):
         except RCONCommandError as e:
             return RCONResponse(success=False, message=str(e))
 
+    async def console(self, command: str) -> RCONResponse:
+        """
+        Send a raw console command to the server.
+
+        For Path of Titans, commands should start with / (e.g., /help, /save, /announce).
+
+        Args:
+            command: Raw console command string
+        """
+        try:
+            response = await self._execute(command)
+            return RCONResponse(
+                success=True,
+                message=f"Command executed: {command}",
+                data={"command": command},
+                raw_response=response
+            )
+        except RCONCommandError as e:
+            return RCONResponse(
+                success=False,
+                message=f"Console command failed: {e}"
+            )
+
 
 def get_rcon_client(game_type: GameType | str, host: str, port: int, password: str) -> BaseRCONClient:
     """
@@ -916,11 +991,30 @@ class RCONManager:
                     server['password']
                 )
                 method = getattr(client, command)
-                return server['id'], await method(*args, **kwargs)
+                response = await method(*args, **kwargs)
+
+                # Update connection status in database
+                from database.queries import RCONServerQueries
+                RCONServerQueries.update_connection_status(
+                    server['id'],
+                    success=response.success,
+                    error=response.message if not response.success else None
+                )
+
+                return server['id'], response
             except Exception as e:
+                # Update connection status with error
+                from database.queries import RCONServerQueries
+                error_msg = f"Error on {server.get('server_name', 'Unknown')}: {e}"
+                RCONServerQueries.update_connection_status(
+                    server['id'],
+                    success=False,
+                    error=str(e)
+                )
+
                 return server['id'], RCONResponse(
                     success=False,
-                    message=f"Error on {server.get('server_name', 'Unknown')}: {e}"
+                    message=error_msg
                 )
 
         # Execute on all servers concurrently

@@ -180,23 +180,36 @@ class StrikeQueries:
             return cursor.fetchall()
 
     @staticmethod
-    def remove_strike(strike_id: int) -> bool:
+    def remove_strike(strike_id: int, removed_by_id: int = None, removed_by_name: str = None) -> bool:
         """Mark a strike as inactive (soft delete). Returns True if updated."""
+        from datetime import datetime
         with get_cursor() as cursor:
             cursor.execute(
-                "UPDATE strikes SET is_active = FALSE WHERE id = %s",
-                (strike_id,)
+                """UPDATE strikes
+                   SET is_active = FALSE,
+                       expired_at = %s,
+                       expiry_reason = 'manual_removal',
+                       removed_by_id = %s,
+                       removed_by_name = %s
+                   WHERE id = %s""",
+                (datetime.now(), removed_by_id, removed_by_name, strike_id)
             )
             return cursor.rowcount > 0
 
     @staticmethod
-    def clear_strikes(guild_id: int, in_game_id: str) -> int:
+    def clear_strikes(guild_id: int, in_game_id: str, removed_by_id: int = None, removed_by_name: str = None) -> int:
         """Clear all active strikes for a player. Returns number cleared."""
+        from datetime import datetime
         with get_cursor() as cursor:
             cursor.execute(
-                """UPDATE strikes SET is_active = FALSE
+                """UPDATE strikes
+                   SET is_active = FALSE,
+                       expired_at = %s,
+                       expiry_reason = 'cleared',
+                       removed_by_id = %s,
+                       removed_by_name = %s
                    WHERE guild_id = %s AND in_game_id = %s AND is_active = TRUE""",
-                (guild_id, in_game_id)
+                (datetime.now(), removed_by_id, removed_by_name, guild_id, in_game_id)
             )
             count = cursor.rowcount
             if count > 0:

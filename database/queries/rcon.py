@@ -447,6 +447,14 @@ class LogChannelQueries:
             return cursor.fetchone()
 
     @staticmethod
+    def get_strikes_channel(guild_id: int) -> Optional[int]:
+        """Get the strikes logging channel for a guild."""
+        channels = LogChannelQueries.get_channels(guild_id)
+        if channels:
+            return channels.get('strikes_channel_id')
+        return None
+
+    @staticmethod
     def set_channel(guild_id: int, channel_type: str, channel_id: int):
         """
         Set a log channel.
@@ -462,6 +470,8 @@ class LogChannelQueries:
             # New enhanced log channels
             'player_login_channel_id', 'player_logout_channel_id', 'player_chat_channel_id',
             'admin_command_channel_id', 'player_death_channel_id', 'rcon_command_channel_id',
+            # Strike system channel
+            'strikes_channel_id',
             # Legacy channels (kept for backwards compatibility)
             'chatlog_channel_id', 'killfeed_channel_id', 'adminlog_channel_id',
             'link_channel_id', 'restart_channel_id'
@@ -701,3 +711,286 @@ class GuildRCONSettingsQueries:
                 [guild_id] + params[:-1]
             )
             return True
+
+
+class DinoPools:
+    """Database operations for guild dinosaur master pools."""
+
+    @staticmethod
+    def get_pool(guild_id: int) -> list[str]:
+        """
+        Get the dinosaur pool for a guild.
+
+        Returns:
+            List of dinosaur names, or empty list if none configured
+        """
+        with get_cursor() as cursor:
+            cursor.execute(
+                "SELECT dinosaur FROM guild_dino_pools WHERE guild_id = %s ORDER BY dinosaur",
+                (guild_id,)
+            )
+            results = cursor.fetchall()
+            return [row['dinosaur'] for row in results] if results else []
+
+    @staticmethod
+    def set_pool(guild_id: int, dinosaurs: list[str]) -> bool:
+        """
+        Replace the entire dinosaur pool for a guild.
+
+        Args:
+            guild_id: Guild ID
+            dinosaurs: List of dinosaur names
+
+        Returns:
+            True if successful
+        """
+        try:
+            with get_cursor() as cursor:
+                # Delete existing pool
+                cursor.execute(
+                    "DELETE FROM guild_dino_pools WHERE guild_id = %s",
+                    (guild_id,)
+                )
+
+                # Insert new pool
+                if dinosaurs:
+                    cursor.executemany(
+                        "INSERT INTO guild_dino_pools (guild_id, dinosaur) VALUES (%s, %s)",
+                        [(guild_id, dino) for dino in dinosaurs]
+                    )
+                return True
+        except Exception as e:
+            logger.error(f"Error setting dino pool for guild {guild_id}: {e}", exc_info=True)
+            return False
+
+    @staticmethod
+    def add_dinosaur(guild_id: int, dinosaur: str) -> bool:
+        """Add a single dinosaur to the pool."""
+        try:
+            with get_cursor() as cursor:
+                cursor.execute(
+                    "INSERT IGNORE INTO guild_dino_pools (guild_id, dinosaur) VALUES (%s, %s)",
+                    (guild_id, dinosaur)
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Error adding dinosaur {dinosaur} to guild {guild_id}: {e}", exc_info=True)
+            return False
+
+    @staticmethod
+    def remove_dinosaur(guild_id: int, dinosaur: str) -> bool:
+        """Remove a single dinosaur from the pool."""
+        try:
+            with get_cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM guild_dino_pools WHERE guild_id = %s AND dinosaur = %s",
+                    (guild_id, dinosaur)
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Error removing dinosaur {dinosaur} from guild {guild_id}: {e}", exc_info=True)
+            return False
+
+
+class AIRestrictions:
+    """Database operations for guild AI restrictions."""
+
+    @staticmethod
+    def get_restrictions(guild_id: int, server_id: int) -> list[str]:
+        """
+        Get AI restrictions for a specific server.
+
+        Returns:
+            List of disallowed AI creature names
+        """
+        with get_cursor() as cursor:
+            cursor.execute(
+                "SELECT ai_creature FROM guild_ai_restrictions WHERE guild_id = %s AND server_id = %s ORDER BY ai_creature",
+                (guild_id, server_id)
+            )
+            results = cursor.fetchall()
+            return [row['ai_creature'] for row in results] if results else []
+
+    @staticmethod
+    def get_all_restrictions(guild_id: int) -> dict[int, list[str]]:
+        """
+        Get AI restrictions for all servers in a guild.
+
+        Returns:
+            Dict mapping server_id to list of disallowed AI creature names
+        """
+        with get_cursor() as cursor:
+            cursor.execute(
+                "SELECT server_id, ai_creature FROM guild_ai_restrictions WHERE guild_id = %s ORDER BY server_id, ai_creature",
+                (guild_id,)
+            )
+            results = cursor.fetchall()
+
+            restrictions = {}
+            for row in results:
+                server_id = row['server_id']
+                if server_id not in restrictions:
+                    restrictions[server_id] = []
+                restrictions[server_id].append(row['ai_creature'])
+
+            return restrictions
+
+    @staticmethod
+    def set_restrictions(guild_id: int, server_id: int, ai_creatures: list[str]) -> bool:
+        """
+        Replace AI restrictions for a specific server.
+
+        Args:
+            guild_id: Guild ID
+            server_id: RCON server ID
+            ai_creatures: List of AI creature names to disallow (empty = allow all)
+
+        Returns:
+            True if successful
+        """
+        try:
+            with get_cursor() as cursor:
+                # Delete existing restrictions for this server
+                cursor.execute(
+                    "DELETE FROM guild_ai_restrictions WHERE guild_id = %s AND server_id = %s",
+                    (guild_id, server_id)
+                )
+
+                # Insert new restrictions
+                if ai_creatures:
+                    cursor.executemany(
+                        "INSERT INTO guild_ai_restrictions (guild_id, server_id, ai_creature) VALUES (%s, %s, %s)",
+                        [(guild_id, server_id, ai) for ai in ai_creatures]
+                    )
+                return True
+        except Exception as e:
+            logger.error(f"Error setting AI restrictions for guild {guild_id} server {server_id}: {e}", exc_info=True)
+            return False
+
+    @staticmethod
+    def set_restrictions_bulk(guild_id: int, server_ids: list[int], ai_creatures: list[str]) -> bool:
+        """
+        Set the same AI restrictions for multiple servers (for "All Servers" option).
+
+        Args:
+            guild_id: Guild ID
+            server_ids: List of RCON server IDs
+            ai_creatures: List of AI creature names to disallow
+
+        Returns:
+            True if successful
+        """
+        try:
+            with get_cursor() as cursor:
+                # Delete existing restrictions for all these servers
+                if server_ids:
+                    placeholders = ','.join(['%s'] * len(server_ids))
+                    cursor.execute(
+                        f"DELETE FROM guild_ai_restrictions WHERE guild_id = %s AND server_id IN ({placeholders})",
+                        [guild_id] + server_ids
+                    )
+
+                    # Insert new restrictions for all servers
+                    if ai_creatures:
+                        values = [(guild_id, server_id, ai) for server_id in server_ids for ai in ai_creatures]
+                        cursor.executemany(
+                            "INSERT INTO guild_ai_restrictions (guild_id, server_id, ai_creature) VALUES (%s, %s, %s)",
+                            values
+                        )
+                return True
+        except Exception as e:
+            logger.error(f"Error setting bulk AI restrictions for guild {guild_id}: {e}", exc_info=True)
+            return False
+
+    @staticmethod
+    def clear_restrictions(guild_id: int, server_id: int) -> bool:
+        """Clear all AI restrictions for a specific server."""
+        return AIRestrictions.set_restrictions(guild_id, server_id, [])
+
+
+class DisabledDinos:
+    """Database operations for guild disabled dinosaurs (tracks current server state)."""
+
+    @staticmethod
+    def get_disabled(guild_id: int, server_id: int) -> list[str]:
+        """
+        Get disabled dinosaurs for a specific server.
+
+        Returns:
+            List of disabled dinosaur names
+        """
+        with get_cursor() as cursor:
+            cursor.execute(
+                "SELECT dinosaur FROM guild_disabled_dinos WHERE guild_id = %s AND server_id = %s ORDER BY dinosaur",
+                (guild_id, server_id)
+            )
+            results = cursor.fetchall()
+            return [row['dinosaur'] for row in results] if results else []
+
+    @staticmethod
+    def set_disabled(guild_id: int, server_id: int, dinosaurs: list[str]) -> bool:
+        """
+        Replace disabled dinosaurs for a specific server.
+
+        Args:
+            guild_id: Guild ID
+            server_id: RCON server ID
+            dinosaurs: List of dinosaur names to disable (empty = none disabled)
+
+        Returns:
+            True if successful
+        """
+        try:
+            with get_cursor() as cursor:
+                # Delete existing disabled dinos for this server
+                cursor.execute(
+                    "DELETE FROM guild_disabled_dinos WHERE guild_id = %s AND server_id = %s",
+                    (guild_id, server_id)
+                )
+
+                # Insert new disabled dinos
+                if dinosaurs:
+                    values = [(guild_id, server_id, dino) for dino in dinosaurs]
+                    cursor.executemany(
+                        "INSERT INTO guild_disabled_dinos (guild_id, server_id, dinosaur) VALUES (%s, %s, %s)",
+                        values
+                    )
+                return True
+        except Exception as e:
+            logger.error(f"Error setting disabled dinos for guild {guild_id}, server {server_id}: {e}", exc_info=True)
+            return False
+
+    @staticmethod
+    def set_disabled_bulk(guild_id: int, server_ids: list[int], dinosaurs: list[str]) -> bool:
+        """
+        Replace disabled dinosaurs for multiple servers at once.
+
+        Args:
+            guild_id: Guild ID
+            server_ids: List of RCON server IDs
+            dinosaurs: List of dinosaur names to disable (same for all servers)
+
+        Returns:
+            True if successful
+        """
+        try:
+            with get_cursor() as cursor:
+                # Delete existing disabled dinos for all these servers
+                if server_ids:
+                    placeholders = ','.join(['%s'] * len(server_ids))
+                    cursor.execute(
+                        f"DELETE FROM guild_disabled_dinos WHERE guild_id = %s AND server_id IN ({placeholders})",
+                        [guild_id] + server_ids
+                    )
+
+                    # Insert new disabled dinos for all servers
+                    if dinosaurs:
+                        values = [(guild_id, server_id, dino) for server_id in server_ids for dino in dinosaurs]
+                        cursor.executemany(
+                            "INSERT INTO guild_disabled_dinos (guild_id, server_id, dinosaur) VALUES (%s, %s, %s)",
+                            values
+                        )
+                return True
+        except Exception as e:
+            logger.error(f"Error setting bulk disabled dinos for guild {guild_id}: {e}", exc_info=True)
+            return False

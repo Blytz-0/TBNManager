@@ -78,11 +78,11 @@ class ConfigCommands(commands.Cog):
                             role_lines.append(f"<@&{role_id}> - {allowed_count} commands")
 
                 if role_lines:
-                    role_text = "Use `/roleperms` to edit\n" + "\n".join(role_lines)
+                    role_text = "Use `/rolepermissions` to edit\n" + "\n".join(role_lines)
                 else:
-                    role_text = "No roles configured.\nUse `/roleperms` to set up permissions."
+                    role_text = "No roles configured.\nUse `/rolepermissions` to set up permissions."
             else:
-                role_text = "No roles configured.\nUse `/roleperms` to set up permissions."
+                role_text = "No roles configured.\nUse `/rolepermissions` to set up permissions."
 
             embed.add_field(name="Permission Roles", value=role_text, inline=False)
 
@@ -127,7 +127,7 @@ class ConfigCommands(commands.Cog):
                 inline=True
             )
 
-            embed.set_footer(text="Use /roleperms, /setchannel, /feature to configure")
+            embed.set_footer(text="Use /rolepermissions, /setchannel, /feature to configure")
 
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -415,15 +415,15 @@ class ConfigCommands(commands.Cog):
             )
 
     @app_commands.command(
-        name="roleperms",
+        name="rolepermissions",
         description="Configure command permissions for a role"
     )
     @app_commands.guild_only()
     async def role_perms(self, interaction: discord.Interaction):
         """Configure permissions for a role - shows role selector."""
 
-        # Only server owner or users with roleperms permission can use this
-        if not await require_permission(interaction, 'roleperms'):
+        # Only server owner or users with rolepermissions permission can use this
+        if not await require_permission(interaction, 'rolepermissions'):
             return
 
         # Show role selector dropdown
@@ -456,53 +456,78 @@ class ConfigCommands(commands.Cog):
                 allowed -= set(commands)
 
         embed = discord.Embed(
-            title="TBNManager Commands",
-            description="Commands you have access to:",
+            title="🎛️ TBNManager - Panel-Based Bot",
+            description=(
+                "Most features are now organized into **interactive panels** for easier use.\n\n"
+                "Use `/panel` to see all available panels, or use the direct panel commands below.\n"
+                "For detailed help on each panel, use the panel's `/help` command."
+            ),
             color=discord.Color.green()
         )
 
-        # Categories with dedicated help commands
-        dedicated_help_categories = {'RCON', 'Server', 'SFTP Logs'}
+        # Core Panels
+        core_panels = []
+        if any(cmd.startswith('inpanel_player_') for cmd in allowed):
+            core_panels.append("👥 **Players Panel** - `/player panel` or `/player help`\nManage player accounts, linking, and lookups")
 
-        # Mapping of category names to slash command groups
-        category_to_group = {
-            'RCON': 'rcon',
-            'Server': 'server',
-            'SFTP Logs': 'sftplogs'
-        }
+        if any(cmd.startswith('inpanel_enforcement_') for cmd in allowed):
+            core_panels.append("⚖️ **Enforcement Panel** - `/enforcement panel` or `/enforcement help`\nManage strikes, bans, and player enforcement")
 
-        # Build help by category
-        for category, commands in COMMAND_CATEGORIES.items():
-            visible = [cmd for cmd in commands if cmd in allowed]
-            if visible:
-                # For large premium categories, show a pointer to dedicated help
-                if category in dedicated_help_categories:
-                    group_name = category_to_group.get(category, category.lower())
-                    embed.add_field(
-                        name=category,
-                        value=f"Use `/{group_name} help` to view all {category} commands ({len(visible)} available)",
-                        inline=False
-                    )
-                else:
-                    # Show full command list for regular categories
-                    cmd_lines = []
-                    for cmd in visible:
-                        desc = COMMAND_DESCRIPTIONS.get(cmd, '')
-                        cmd_lines.append(f"`/{cmd}` - {desc}")
-                    embed.add_field(
-                        name=category,
-                        value="\n".join(cmd_lines),
-                        inline=False
-                    )
+        if any(cmd.startswith('inpanel_tickets_') for cmd in allowed):
+            core_panels.append("🎫 **Tickets Panel** - `/tickets panel` or `/tickets help`\nManage support ticket system")
 
-        if not any(embed.fields):
+        if any(cmd.startswith('inpanel_moderation_') for cmd in allowed):
+            core_panels.append("🛡️ **Moderation Panel** - `/moderation panel` or `/moderation help`\nServer moderation tools and utilities")
+
+        if any(cmd.startswith('inpanel_settings_') for cmd in allowed):
+            core_panels.append("⚙️ **Settings Panel** - `/settings panel` or `/settings help`\nBot configuration and features (Owner)")
+
+        if core_panels:
+            embed.add_field(
+                name="Core Panels",
+                value="\n\n".join(core_panels),
+                inline=False
+            )
+
+        # Infrastructure Panels (Premium)
+        premium_panels = []
+        if any(cmd.startswith('inpanel_rcon_') for cmd in allowed):
+            premium_panels.append("🎮 **RCON Panel** - `/rcon panel` or `/rcon help`\nInteractive RCON server control")
+
+        if any(cmd.startswith('inpanel_ptero_') for cmd in allowed):
+            premium_panels.append("🖥️ **Pterodactyl Panel** - `/pterodactyl panel` or `/pterodactyl help`\nServer management via Pterodactyl")
+
+        if any(cmd.startswith('inpanel_logs_') for cmd in allowed):
+            premium_panels.append("📊 **Logs Panel** - `/sftplogs panel` or `/sftplogs help`\nSFTP log monitoring and browsing")
+
+        if premium_panels:
+            embed.add_field(
+                name="🏗️ Infrastructure Panels (Premium)",
+                value="\n\n".join(premium_panels),
+                inline=False
+            )
+
+        # Quick links
+        embed.add_field(
+            name="Quick Links",
+            value=(
+                "• `/panel` - Main panel launcher (shows all available panels)\n"
+                "• `/rolepermissions` - Configure role permissions\n"
+                "• `/setup` - View bot configuration\n"
+                "• `/feature` - Toggle features on/off"
+            ),
+            inline=False
+        )
+
+        if not core_panels and not premium_panels:
             embed.description = (
-                "You don't have access to any commands.\n\n"
+                "You don't have access to any panels.\n\n"
                 "Contact a server administrator to request permissions."
             )
 
         total_commands = get_command_count()
-        embed.set_footer(text=f"You have access to {len(allowed)} of {total_commands} commands | Use /roleperms to configure")
+        accessible_actions = len([cmd for cmd in allowed if cmd.startswith('inpanel_')])
+        embed.set_footer(text=f"You have access to {accessible_actions} actions across {len(core_panels) + len(premium_panels)} panels")
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

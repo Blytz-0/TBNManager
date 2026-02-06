@@ -154,6 +154,38 @@ class PermissionQueries:
             return cursor.rowcount
 
     @staticmethod
+    def grant_permission(guild_id: int, role_id: int, command_name: str):
+        """
+        Grant a single permission to a role.
+        Uses INSERT ... ON DUPLICATE KEY UPDATE to handle existing entries.
+        """
+        with get_cursor() as cursor:
+            cursor.execute(
+                """INSERT INTO guild_role_permissions
+                   (guild_id, role_id, command_name, allowed)
+                   VALUES (%s, %s, %s, TRUE)
+                   ON DUPLICATE KEY UPDATE allowed = TRUE""",
+                (guild_id, role_id, command_name)
+            )
+
+    @staticmethod
+    def get_all_configured_guilds() -> list[int]:
+        """
+        Get all guild IDs that have configured role permissions.
+
+        Returns:
+            List of guild IDs
+        """
+        with get_cursor() as cursor:
+            cursor.execute(
+                """SELECT DISTINCT guild_id
+                   FROM guild_role_permissions
+                   ORDER BY guild_id"""
+            )
+            results = cursor.fetchall()
+            return [row['guild_id'] for row in results]
+
+    @staticmethod
     def cleanup_stale_commands(guild_id: int = None) -> int:
         """
         Remove permission entries for commands that no longer exist.

@@ -50,6 +50,14 @@ COGS = [
     'cogs.admin.rcon',
     'cogs.admin.servercontrol',
     'cogs.admin.serverlogs',
+
+    # Panel System
+    'cogs.panel_launcher',           # Main /panel launcher
+    'cogs.player.player_panel',      # Players panel
+    'cogs.player.enforcement_panel', # Enforcement panel
+    'cogs.tickets.tickets_panel',    # Tickets panel
+    'cogs.moderation.moderation_panel', # Moderation panel
+    'cogs.admin.settings_panel',     # Settings panel
 ]
 
 

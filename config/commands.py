@@ -22,7 +22,7 @@ COMMAND_CATEGORIES = {
         'ticketlist', 'closeticket', 'claimticket', 'ticketadd', 'ticketremove'
     ],
     'Moderation': ['announce', 'say', 'clear', 'rolepanel', 'serverinfo', 'userinfo'],
-    'Config': ['setup', 'setchannel', 'feature', 'roleperms', 'help'],
+    'Config': ['setup', 'setchannel', 'feature', 'rolepermissions', 'help'],
     # Premium: RCON Integration
     'RCON': [
         'rcon_help', 'rcon_addserver', 'rcon_servers', 'rcon_removeserver', 'rcon_test',
@@ -41,6 +41,64 @@ COMMAND_CATEGORIES = {
     'SFTP Logs': [
         'logs_help', 'logs_setup', 'logs_setpath', 'logs_setchannel', 'logs_start', 'logs_stop',
         'logs_status', 'logs_fileinfo', 'logs_test', 'logs_readfile', 'logs_browse'
+    ],
+    # Panel Access Permissions (Meta-Permissions)
+    'Panel Access': [
+        'panel.players', 'panel.enforcement', 'panel.tickets', 'panel.moderation', 'panel.settings',
+        'panel.rcon', 'panel.pterodactyl', 'panel.logs',
+        # Legacy panel access (for compatibility)
+        'pterodactyl_panel', 'rcon_panel', 'logs_panel'
+    ],
+    # Pterodactyl Panel Features
+    'Pterodactyl Panel': [
+        'inpanel_ptero_setup', 'inpanel_ptero_connections', 'inpanel_ptero_refresh', 'inpanel_ptero_list',
+        'inpanel_ptero_info', 'inpanel_ptero_start', 'inpanel_ptero_stop', 'inpanel_ptero_restart',
+        'inpanel_ptero_kill', 'inpanel_ptero_files', 'inpanel_ptero_console'
+    ],
+    # RCON Panel Features
+    'RCON Panel': [
+        'inpanel_rcon_addserver', 'inpanel_rcon_servers', 'inpanel_rcon_removeserver', 'inpanel_rcon_test',
+        'inpanel_rcon_console', 'inpanel_rcon_kick', 'inpanel_rcon_ban', 'inpanel_rcon_announce',
+        'inpanel_rcon_dm', 'inpanel_rcon_players', 'inpanel_rcon_wipecorpses', 'inpanel_rcon_allowclasses',
+        'inpanel_rcon_addremoveclass', 'inpanel_rcon_globalchat', 'inpanel_rcon_togglehumans',
+        'inpanel_rcon_toggleai', 'inpanel_rcon_disableai', 'inpanel_rcon_aidensity',
+        'inpanel_rcon_whitelist', 'inpanel_rcon_managewhitelist'
+    ],
+    # SFTP/Logs Panel Features
+    'SFTP Logs Panel': [
+        'inpanel_logs_setup', 'inpanel_logs_setpath', 'inpanel_logs_setchannel',
+        'inpanel_logs_start', 'inpanel_logs_stop', 'inpanel_logs_status',
+        'inpanel_logs_browse', 'inpanel_logs_readfile'
+    ],
+    # Players Panel Features
+    'Players Panel': [
+        'inpanel_player_linkids', 'inpanel_player_verify',
+        'inpanel_player_lookup', 'inpanel_player_myid', 'inpanel_player_unlink'
+    ],
+    # Enforcement Panel Features
+    'Enforcement Panel': [
+        'inpanel_enforcement_addstrike', 'inpanel_enforcement_viewstrikes', 'inpanel_enforcement_history',
+        'inpanel_enforcement_remove', 'inpanel_enforcement_clear', 'inpanel_enforcement_ban',
+        'inpanel_enforcement_unban', 'inpanel_enforcement_banlist', 'inpanel_enforcement_wipe',
+        'inpanel_enforcement_recent'
+    ],
+    # Tickets Panel Features
+    'Tickets Panel': [
+        'inpanel_tickets_createpanel', 'inpanel_tickets_addbutton', 'inpanel_tickets_refresh',
+        'inpanel_tickets_listpanels', 'inpanel_tickets_list', 'inpanel_tickets_close',
+        'inpanel_tickets_claim', 'inpanel_tickets_adduser', 'inpanel_tickets_removeuser'
+    ],
+    # Moderation Panel Features
+    'Moderation Panel': [
+        'inpanel_moderation_announce', 'inpanel_moderation_say', 'inpanel_moderation_clear',
+        'inpanel_moderation_rolepanel', 'inpanel_moderation_serverinfo', 'inpanel_moderation_userinfo',
+        'inpanel_moderation_aidetect', 'inpanel_moderation_aisettings'
+    ],
+    # Settings Panel Features (Owner Only)
+    'Settings Panel': [
+        'inpanel_settings_view', 'inpanel_settings_features', 'inpanel_settings_setchannel',
+        'inpanel_settings_setadminrole', 'inpanel_settings_removeadminrole', 'inpanel_settings_adminroles',
+        'inpanel_settings_permissions', 'inpanel_settings_premium', 'inpanel_settings_subscription'
     ],
 }
 
@@ -80,7 +138,7 @@ FEATURE_COMMANDS = {
 # Commands that should default to false for all roles (dangerous/sensitive)
 RESTRICTED_COMMANDS = [
     'wipehistory',  # Permanently deletes records
-    'roleperms',    # Modifies permission system
+    'rolepermissions',    # Modifies permission system
     'feature',      # Toggles bot features
     'ban',          # Direct ban without strikes
     'clearstrikes', # Removes all strikes
@@ -103,6 +161,20 @@ RESTRICTED_COMMANDS = [
     'server_kill',      # Force kills server
     'server_editfile',  # Edits server files
     'server_console',   # Direct console access
+    # Panel - Enforcement dangerous commands
+    'inpanel_enforcement_ban',   # Direct ban without strikes
+    'inpanel_enforcement_clear', # Clear all strikes
+    'inpanel_enforcement_wipe',  # Permanently delete records
+    # Panel - Players dangerous commands
+    'inpanel_player_unlink',     # Unlink IDs (ban evasion risk)
+    # Panel - Settings dangerous commands
+    'inpanel_settings_features',     # Toggle bot features
+    'inpanel_settings_permissions',  # Modify permission system
+    'inpanel_settings_setadminrole',    # Add admin role
+    'inpanel_settings_removeadminrole', # Remove admin role
+    # Panel - Moderation dangerous commands
+    'inpanel_moderation_clear',      # Delete messages
+    'inpanel_moderation_aisettings', # Configure AI detection
 ]
 
 # Command descriptions for /help display
@@ -150,7 +222,7 @@ COMMAND_DESCRIPTIONS = {
     'setup': 'View bot configuration',
     'setchannel': 'Set channel for logs/announcements',
     'feature': 'Enable/disable bot features',
-    'roleperms': 'Configure role permissions',
+    'rolepermissions': 'Configure role permissions',
     'help': 'List available commands',
 
     # RCON (Premium)
@@ -208,6 +280,117 @@ COMMAND_DESCRIPTIONS = {
     'logs_test': '[Premium] Test log file reading',
     'logs_readfile': '[Premium] Read file contents',
     'logs_browse': '[Premium] Browse SFTP directory',
+
+    # Panel Access Permissions
+    'pterodactyl_panel': '[Premium] Access Pterodactyl panel',
+    'rcon_panel': '[Premium] Access RCON panel',
+    'logs_panel': '[Premium] Access SFTP logs panel',
+
+    # Pterodactyl Panel Features
+    'inpanel_ptero_setup': '[Panel] Configure Pterodactyl connection',
+    'inpanel_ptero_connections': '[Panel] List Pterodactyl connections',
+    'inpanel_ptero_refresh': '[Panel] Re-discover servers',
+    'inpanel_ptero_list': '[Panel] List game servers',
+    'inpanel_ptero_info': '[Panel] Show server info',
+    'inpanel_ptero_start': '[Panel] Start game server',
+    'inpanel_ptero_stop': '[Panel] Stop game server',
+    'inpanel_ptero_restart': '[Panel] Restart game server',
+    'inpanel_ptero_kill': '[Panel] Force kill server',
+    'inpanel_ptero_files': '[Panel] Browse server files',
+    'inpanel_ptero_console': '[Panel] Send console command',
+
+    # RCON Panel Features
+    'inpanel_rcon_addserver': '[Panel] Add RCON server',
+    'inpanel_rcon_servers': '[Panel] List RCON servers',
+    'inpanel_rcon_removeserver': '[Panel] Remove RCON server',
+    'inpanel_rcon_test': '[Panel] Test RCON connection',
+    'inpanel_rcon_console': '[Panel] Send raw RCON command',
+    'inpanel_rcon_kick': '[Panel] Kick player',
+    'inpanel_rcon_ban': '[Panel] Ban player',
+    'inpanel_rcon_announce': '[Panel] Send announcement',
+    'inpanel_rcon_dm': '[Panel] DM player in-game',
+    'inpanel_rcon_players': '[Panel] List online players',
+    'inpanel_rcon_wipecorpses': '[Panel] Wipe corpses',
+    'inpanel_rcon_allowclasses': '[Panel] Allow/disallow dinos',
+    'inpanel_rcon_addremoveclass': '[Panel] Manage dino pool',
+    'inpanel_rcon_globalchat': '[Panel] Toggle global chat',
+    'inpanel_rcon_togglehumans': '[Panel] Toggle humans',
+    'inpanel_rcon_toggleai': '[Panel] Toggle AI',
+    'inpanel_rcon_disableai': '[Panel] Disable specific AI',
+    'inpanel_rcon_aidensity': '[Panel] Set AI density',
+    'inpanel_rcon_whitelist': '[Panel] Toggle whitelist',
+    'inpanel_rcon_managewhitelist': '[Panel] Manage whitelist',
+
+    # SFTP Logs Panel Features
+    'inpanel_logs_setup': '[Panel] Configure SFTP',
+    'inpanel_logs_setpath': '[Panel] Set log file path',
+    'inpanel_logs_setchannel': '[Panel] Set log channels',
+    'inpanel_logs_start': '[Panel] Start monitoring',
+    'inpanel_logs_stop': '[Panel] Stop monitoring',
+    'inpanel_logs_status': '[Panel] View status',
+    'inpanel_logs_browse': '[Panel] Browse files',
+    'inpanel_logs_readfile': '[Panel] Read file',
+
+    # Panel Access (Meta-Permissions)
+    'panel.players': 'Access Players panel',
+    'panel.enforcement': 'Access Enforcement panel',
+    'panel.tickets': 'Access Tickets panel',
+    'panel.moderation': 'Access Moderation panel',
+    'panel.settings': 'Access Settings panel (Owner)',
+    'panel.rcon': '[Premium] Access RCON panel',
+    'panel.pterodactyl': '[Premium] Access Pterodactyl panel',
+    'panel.logs': '[Premium] Access SFTP Logs panel',
+
+    # Players Panel Features
+    'inpanel_player_linkids': '[Panel] Link Steam or Alderon ID',
+    'inpanel_player_verify': '[Panel] Verify in-game with code',
+    'inpanel_player_lookup': '[Panel] Look up player by ID',
+    'inpanel_player_myid': '[Panel] View your linked accounts',
+    'inpanel_player_unlink': '[Panel] Unlink user ID (Admin)',
+
+    # Enforcement Panel Features
+    'inpanel_enforcement_addstrike': '[Panel] Issue strike to player',
+    'inpanel_enforcement_viewstrikes': '[Panel] View active strikes',
+    'inpanel_enforcement_history': '[Panel] View full strike history',
+    'inpanel_enforcement_remove': '[Panel] Remove specific strike',
+    'inpanel_enforcement_clear': '[Panel] Clear all active strikes',
+    'inpanel_enforcement_ban': '[Panel] Directly ban player',
+    'inpanel_enforcement_unban': '[Panel] Unban player',
+    'inpanel_enforcement_banlist': '[Panel] List all banned players',
+    'inpanel_enforcement_wipe': '[Panel] Permanently delete records',
+    'inpanel_enforcement_recent': '[Panel] View recent strikes',
+
+    # Tickets Panel Features
+    'inpanel_tickets_createpanel': '[Panel] Create new ticket panel',
+    'inpanel_tickets_addbutton': '[Panel] Add button to panel',
+    'inpanel_tickets_refresh': '[Panel] Refresh panel after changes',
+    'inpanel_tickets_listpanels': '[Panel] List all ticket panels',
+    'inpanel_tickets_list': '[Panel] View all open tickets',
+    'inpanel_tickets_close': '[Panel] Close current ticket',
+    'inpanel_tickets_claim': '[Panel] Claim ticket to handle',
+    'inpanel_tickets_adduser': '[Panel] Add user to ticket',
+    'inpanel_tickets_removeuser': '[Panel] Remove user from ticket',
+
+    # Moderation Panel Features
+    'inpanel_moderation_announce': '[Panel] Send formatted announcement',
+    'inpanel_moderation_say': '[Panel] Send message as bot',
+    'inpanel_moderation_clear': '[Panel] Delete messages from channel',
+    'inpanel_moderation_rolepanel': '[Panel] Create role selection panel',
+    'inpanel_moderation_serverinfo': '[Panel] View server information',
+    'inpanel_moderation_userinfo': '[Panel] View user information',
+    'inpanel_moderation_aidetect': '[Panel] Run AI detection (Coming Soon)',
+    'inpanel_moderation_aisettings': '[Panel] Configure AI detection (Coming Soon)',
+
+    # Settings Panel Features
+    'inpanel_settings_view': '[Panel] View bot configuration',
+    'inpanel_settings_features': '[Panel] Toggle bot features',
+    'inpanel_settings_setchannel': '[Panel] Configure log channels',
+    'inpanel_settings_setadminrole': '[Panel] Add admin role',
+    'inpanel_settings_removeadminrole': '[Panel] Remove admin role',
+    'inpanel_settings_adminroles': '[Panel] View admin roles',
+    'inpanel_settings_permissions': '[Panel] Configure role permissions',
+    'inpanel_settings_premium': '[Panel] View premium status (Coming Soon)',
+    'inpanel_settings_subscription': '[Panel] Manage subscription (Coming Soon)',
 }
 
 

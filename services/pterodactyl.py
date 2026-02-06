@@ -46,13 +46,18 @@ class ServerInfo:
     status: ServerStatus
     is_suspended: bool
     node: str
-    allocation: dict  # ip, port, alias
+    allocation: dict  # ip, port, alias (kept for backwards compatibility)
+    ip: str
+    port: int
+    rcon_port: Optional[int] = None
+    game_type: Optional[str] = None
 
 
 @dataclass
 class ServerResources:
     """Server resource utilization."""
     cpu_percent: float
+    cpu_limit: int
     memory_bytes: int
     memory_limit_bytes: int
     disk_bytes: int
@@ -167,6 +172,12 @@ class PterodactylClient:
             servers = []
             for server_data in response.get('data', []):
                 attrs = server_data.get('attributes', {})
+
+                # Extract allocation (IP, port)
+                allocation_data = attrs.get('allocation', {})
+                ip = allocation_data.get('ip', 'Unknown')
+                port = allocation_data.get('port', 0)
+
                 servers.append(ServerInfo(
                     server_id=attrs.get('identifier', ''),
                     name=attrs.get('name', 'Unknown'),
@@ -175,7 +186,11 @@ class PterodactylClient:
                     status=self._parse_status(attrs),
                     is_suspended=attrs.get('is_suspended', False),
                     node=attrs.get('node', 'Unknown'),
-                    allocation=attrs.get('allocation', {})
+                    allocation=allocation_data,
+                    ip=ip,
+                    port=port,
+                    rcon_port=None,  # Not available in list view
+                    game_type=None  # Not available in list view
                 ))
             return servers
         except Exception as e:
@@ -251,6 +266,40 @@ class PterodactylClient:
             # Client API returns data directly, Application API wraps in 'attributes'
             attrs = response.get('attributes', response)
 
+            # Extract allocation (IP, port)
+            allocation_data = attrs.get('relationships', {}).get('allocations', {}).get('data', [{}])[0].get('attributes', {}) if 'relationships' in attrs else attrs.get('allocation', {})
+            ip = allocation_data.get('ip', 'Unknown')
+            port = allocation_data.get('port', 0)
+
+            # Extract RCON port from variables
+            rcon_port = None
+            variables_data = attrs.get('relationships', {}).get('variables', {}).get('data', [])
+            for var in variables_data:
+                var_attrs = var.get('attributes', {})
+                if var_attrs.get('env_variable') == 'RCON_PORT':
+                    try:
+                        rcon_port = int(var_attrs.get('server_value', 0))
+                    except (ValueError, TypeError):
+                        pass
+                    break
+
+            # Detect game type from docker_image or egg
+            game_type = None
+            docker_image = attrs.get('docker_image', '').lower()
+
+            if 'theisle' in docker_image or 'evrima' in docker_image:
+                game_type = 'The Isle Evrima'
+            elif 'pathoftitans' in docker_image or 'pot' in docker_image:
+                game_type = 'Path of Titans'
+            else:
+                # Try to detect from egg name in relationships
+                egg_data = attrs.get('relationships', {}).get('egg', {}).get('attributes', {})
+                egg_name = egg_data.get('name', '').lower()
+                if 'isle' in egg_name or 'evrima' in egg_name:
+                    game_type = 'The Isle Evrima'
+                elif 'path of titans' in egg_name or 'pot' in egg_name:
+                    game_type = 'Path of Titans'
+
             return ServerInfo(
                 server_id=attrs.get('identifier', server_id),
                 name=attrs.get('name', 'Unknown'),
@@ -259,7 +308,11 @@ class PterodactylClient:
                 status=self._parse_status(attrs),
                 is_suspended=attrs.get('is_suspended', False),
                 node=attrs.get('node', 'Unknown'),
-                allocation=attrs.get('relationships', {}).get('allocations', {}).get('data', [{}])[0].get('attributes', {}) if 'relationships' in attrs else attrs.get('allocation', {})
+                allocation=allocation_data,
+                ip=ip,
+                port=port,
+                rcon_port=rcon_port,
+                game_type=game_type
             )
         except Exception as e:
             logger.error(f"Failed to get server info: {e}", exc_info=True)
@@ -287,15 +340,20 @@ class PterodactylClient:
             server_attrs = server_info_response.get('attributes', server_info_response)
             limits = server_attrs.get('limits', {})
 
+            # Uptime is returned in milliseconds, convert to seconds
+            uptime_ms = resources.get('uptime', 0)
+            uptime_seconds = uptime_ms // 1000 if uptime_ms > 0 else 0
+
             return ServerResources(
                 cpu_percent=resources.get('cpu_absolute', 0),
+                cpu_limit=limits.get('cpu', 0),
                 memory_bytes=resources.get('memory_bytes', 0),
                 memory_limit_bytes=limits.get('memory', 0) * 1024 * 1024,
                 disk_bytes=resources.get('disk_bytes', 0),
                 disk_limit_bytes=limits.get('disk', 0) * 1024 * 1024,
                 network_rx_bytes=resources.get('network_rx_bytes', 0),
                 network_tx_bytes=resources.get('network_tx_bytes', 0),
-                uptime_seconds=resources.get('uptime', 0)
+                uptime_seconds=uptime_seconds
             )
         except Exception as e:
             logger.error(f"Failed to get server resources: {e}", exc_info=True)
@@ -304,6 +362,30 @@ class PterodactylClient:
     # ==========================================
     # FILE OPERATIONS
     # ==========================================
+
+    def _normalize_path(self, path: str) -> str:
+        """
+        Normalize file paths by removing spaces around slashes.
+
+        Examples:
+            "TheIsle / Saved / Config" -> "/TheIsle/Saved/Config"
+            "TheIsle/Saved/Config" -> "/TheIsle/Saved/Config"
+            " / TheIsle / Saved" -> "/TheIsle/Saved"
+
+        Args:
+            path: Input path with potential spaces
+
+        Returns:
+            Normalized path starting with /
+        """
+        # Remove spaces around slashes
+        normalized = path.replace(' / ', '/').replace('/ ', '/').replace(' /', '/')
+
+        # Ensure path starts with /
+        if not normalized.startswith('/'):
+            normalized = '/' + normalized
+
+        return normalized
 
     async def list_files(self, server_id: str, directory: str = "/") -> list[FileInfo]:
         """
@@ -314,6 +396,9 @@ class PterodactylClient:
             directory: Directory path (default: root)
         """
         try:
+            # Normalize path to handle spaces around slashes
+            directory = self._normalize_path(directory)
+
             client = await self._get_client()
             response = await asyncio.to_thread(
                 client.client.servers.files.list_files,
@@ -355,15 +440,40 @@ class PterodactylClient:
             file_path: Path to the file
         """
         try:
-            client = await self._get_client()
-            content = await asyncio.to_thread(
-                client.client.servers.files.get_file_contents,
-                server_id,
-                file_path
-            )
-            return content
+            # Normalize path to handle spaces around slashes
+            original_path = file_path
+            file_path = self._normalize_path(file_path)
+
+            logger.info(f"read_file: Original path: '{original_path}' -> Normalized: '{file_path}'")
+            logger.info(f"read_file: server_id={server_id}")
+
+            # WORKAROUND: py-dactyl's get_file_contents returns empty dict with Client API
+            # Use download URL method + HTTP fetch instead
+            logger.info(f"Using download URL workaround to fetch file contents")
+
+            # Get signed download URL
+            download_url = await self.get_download_url(server_id, file_path)
+            if not download_url:
+                logger.error(f"Failed to get download URL for file: '{file_path}'")
+                return None
+
+            logger.info(f"Got download URL, fetching content...")
+
+            # Fetch file content from download URL
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(download_url) as resp:
+                    if resp.status == 200:
+                        content = await resp.text()
+                        logger.info(f"SUCCESS: Fetched {len(content)} bytes from download URL")
+                        return content
+                    else:
+                        logger.error(f"HTTP {resp.status} when fetching download URL")
+                        return None
+
         except Exception as e:
-            logger.error(f"Failed to read file: {e}")
+            logger.error(f"EXCEPTION reading file '{file_path}': {e}", exc_info=True)
+            logger.error(f"Exception type: {type(e).__name__}")
             return None
 
     async def write_file(self, server_id: str, file_path: str, content: str) -> PteroResponse:
@@ -376,6 +486,9 @@ class PterodactylClient:
             content: Content to write
         """
         try:
+            # Normalize path to handle spaces around slashes
+            file_path = self._normalize_path(file_path)
+
             client = await self._get_client()
             await asyncio.to_thread(
                 client.client.servers.files.write_file,
@@ -401,20 +514,29 @@ class PterodactylClient:
             file_path: Path to the file
         """
         try:
+            # Normalize path to handle spaces around slashes
+            file_path = self._normalize_path(file_path)
+
             client = await self._get_client()
             response = await asyncio.to_thread(
                 client.client.servers.files.download_file,
                 server_id,
                 file_path
             )
+            # API may return URL directly as string or wrapped in dict
+            if isinstance(response, str):
+                return response
             return response.get('attributes', {}).get('url')
         except Exception as e:
-            logger.error(f"Failed to get download URL: {e}")
+            logger.error(f"Failed to get download URL: {e}", exc_info=True)
             return None
 
     async def delete_file(self, server_id: str, file_path: str) -> PteroResponse:
         """Delete a file or directory."""
         try:
+            # Normalize path to handle spaces around slashes
+            file_path = self._normalize_path(file_path)
+
             client = await self._get_client()
             await asyncio.to_thread(
                 client.client.servers.files.delete_files,

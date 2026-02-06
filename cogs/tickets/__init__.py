@@ -1,0 +1,1 @@
+# cogs/tickets package
